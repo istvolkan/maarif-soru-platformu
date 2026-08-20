@@ -8,16 +8,29 @@ Mimari tasarımın tam metni: proje kickoff'unda paylaşılan Artifact (A–O ta
 ```
 src/
   MaarifPlatform.Domain          — entity'ler, enum'lar (dış bağımlılık yok, Pgvector.Vector hariç)
-  MaarifPlatform.Application     — ILLMProvider sözleşmesi ve DTO'lar (§11 provider-agnostic mimari)
-  MaarifPlatform.Infrastructure  — EF Core (Npgsql + pgvector), DbContext, migration'lar
-  MaarifPlatform.Api             — ASP.NET Core Web API (composition root)
+  MaarifPlatform.Application     — ILLMProvider + Extraction/Storage sözleşmeleri ve DTO'lar (§11)
+  MaarifPlatform.Infrastructure  — EF Core (Npgsql + pgvector), DbContext, migration'lar,
+                                    PDF extraction pipeline (Docnet.Core + heuristic segmenter)
+  MaarifPlatform.Api             — ASP.NET Core Web API (composition root), BooksController
 tests/
-  MaarifPlatform.Tests           — xUnit
+  MaarifPlatform.Tests           — xUnit (segmenter testleri)
 docker-compose.yml                — lokal PostgreSQL + pgvector
 ```
 
-Bu, Sprint 1 kapsamıdır (§O Faz 1 / MVP Sprint 1): çözüm iskeleti + veritabanı şeması.
-Auth/RBAC, extraction pipeline, AI sağlayıcı implementasyonları sonraki sprintlerde eklenecek.
+Sprint 1 (§O Faz 1): çözüm iskeleti + veritabanı şeması.
+Sprint 2 (§O Faz 1 devamı / §K madde 2-4): PDF → sayfa → soru bloğu → Question DNA pipeline'ı,
+`POST /api/books`, `POST /api/books/{id}/extract`, `GET /api/books/{id}/questions`.
+Auth/RBAC ve AI sağlayıcı implementasyonları sonraki sprintlerde eklenecek.
+
+### PDF kütüphanesi seçimi hakkında not
+
+Extraction için önce `UglyToad.PdfPig` denendi; nuget.org'daki paket kaydının **ele
+geçirilmiş/el değiştirmiş** olduğuna dair güçlü belirtiler bulununca (tanınmayan sahip
+"grinay", jenerik açıklama, `0.1.9-alpha001-patch1` → `1.7.0-custom-5` tutarsız sürüm
+sıçraması) paket kaldırıldı, yerel NuGet önbelleğinden temizlendi ve yerine PDFium'u
+saran, temiz sürüm geçmişine sahip **Docnet.Core** (MIT, GowenGit) kullanıldı.
+Bağımlılık eklerken NuGet paket kaydını (sahip, açıklama, sürüm geçmişi) doğrulama
+alışkanlığı bu projede sürdürülmelidir.
 
 ## Yerel geliştirme
 
@@ -61,3 +74,8 @@ dotnet ef migrations add <İsim> \
 - `question_dna` tablosundaki `*Json` alanları `jsonb` sütunlardır; henüz olgunlaşmamış
   yeni DNA alanları önce `ExtensionsJson`'a eklenmelidir (§elestiri madde 12).
 - `AuditLogEntry` uygulama katmanında yalnızca insert edilmeli, hiçbir zaman update edilmemelidir (§N).
+- Soru sınırı tespiti (`HeuristicQuestionSegmenter`) tamamen deterministiktir, AI kullanmaz
+  (§9 maliyet ilkesi: önce ücretsiz heuristic, LLM sadece düşük güvenli durumlarda). Bir soru
+  bloğunun sayfa sınırını aşması desteklenmez; her sayfa bağımsız işlenir (bilinçli MVP sınırı).
+- Yerel dosya deposu (`LocalFileStorage`) `src/MaarifPlatform.Api/data/` altına yazar,
+  `.gitignore`'dadır; gerçek ortamda blob storage ile değiştirilecek (§L).

@@ -1,4 +1,8 @@
+using MaarifPlatform.Application.Extraction;
+using MaarifPlatform.Application.Storage;
+using MaarifPlatform.Infrastructure.Extraction;
 using MaarifPlatform.Infrastructure.Persistence;
+using MaarifPlatform.Infrastructure.Storage;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -15,6 +19,13 @@ var connectionString = builder.Configuration.GetConnectionString("MaarifDb")
 
 builder.Services.AddDbContext<MaarifDbContext>(options =>
     options.UseNpgsql(connectionString, npg => npg.UseVector()));
+
+// §10 PDF İşleme pipeline'ı.
+builder.Services.Configure<LocalFileStorageOptions>(builder.Configuration.GetSection("Storage"));
+builder.Services.AddScoped<IBookFileStorage, LocalFileStorage>();
+builder.Services.AddScoped<IPdfTextExtractor, DocnetTextExtractor>();
+builder.Services.AddScoped<IQuestionSegmenter, HeuristicQuestionSegmenter>();
+builder.Services.AddScoped<BookExtractionService>();
 
 var app = builder.Build();
 

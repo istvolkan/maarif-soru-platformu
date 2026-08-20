@@ -8,6 +8,9 @@ obj/
 # Local dev secrets / overrides
 appsettings.*.local.json
 
+# Yerel dosya depolama (yüklenen PDF'ler) — §L'de blob storage'a taşınacak
+src/MaarifPlatform.Api/data/
+
 # OS
 .DS_Store
 Thumbs.db
