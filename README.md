@@ -8,19 +8,23 @@ Mimari tasarımın tam metni: proje kickoff'unda paylaşılan Artifact (A–O ta
 ```
 src/
   MaarifPlatform.Domain          — entity'ler, enum'lar (dış bağımlılık yok, Pgvector.Vector hariç)
-  MaarifPlatform.Application     — ILLMProvider + Extraction/Storage sözleşmeleri ve DTO'lar (§11)
+  MaarifPlatform.Application     — ILLMProvider + Extraction/Storage/Rag sözleşmeleri ve DTO'lar (§11)
   MaarifPlatform.Infrastructure  — EF Core (Npgsql + pgvector), DbContext, migration'lar,
-                                    PDF extraction pipeline (Docnet.Core + heuristic segmenter)
-  MaarifPlatform.Api             — ASP.NET Core Web API (composition root), BooksController
+                                    PDF extraction (Docnet.Core + heuristic segmenter),
+                                    RAG ingestion + retrieval (chunker + embedding sağlayıcıları)
+  MaarifPlatform.Api             — ASP.NET Core Web API (composition root), Books/ReferenceDocuments controller'ları
 tests/
-  MaarifPlatform.Tests           — xUnit (segmenter testleri)
+  MaarifPlatform.Tests           — xUnit (segmenter, chunker, embedding provider testleri)
 docker-compose.yml                — lokal PostgreSQL + pgvector
 ```
 
 Sprint 1 (§O Faz 1): çözüm iskeleti + veritabanı şeması.
 Sprint 2 (§O Faz 1 devamı / §K madde 2-4): PDF → sayfa → soru bloğu → Question DNA pipeline'ı,
 `POST /api/books`, `POST /api/books/{id}/extract`, `GET /api/books/{id}/questions`.
-Auth/RBAC ve AI sağlayıcı implementasyonları sonraki sprintlerde eklenecek.
+Sprint 3 (§O Faz 1 devamı / §K madde 1, §G RAG mimarisi): MEB referans dokümanı yükleme,
+chunking, embedding, pgvector retrieval — `POST /api/reference-documents`,
+`POST /api/reference-documents/{id}/ingest`, `GET /api/reference-documents/search`.
+Auth/RBAC ve gerçek Analysis/Judge AI entegrasyonu sonraki sprintlerde eklenecek.
 
 ### PDF kütüphanesi seçimi hakkında not
 
@@ -79,3 +83,10 @@ dotnet ef migrations add <İsim> \
   bloğunun sayfa sınırını aşması desteklenmez; her sayfa bağımsız işlenir (bilinçli MVP sınırı).
 - Yerel dosya deposu (`LocalFileStorage`) `src/MaarifPlatform.Api/data/` altına yazar,
   `.gitignore`'dadır; gerçek ortamda blob storage ile değiştirilecek (§L).
+- Embedding sağlayıcısı `appsettings.json`'daki `Embeddings:Provider` ile seçilir. Varsayılan
+  **"Local"** — `LocalDeterministicEmbeddingProvider`, dış API anahtarı gerektirmez ama
+  semantik olarak ANLAMLI DEĞİLDİR (yalnızca aynı metin → aynı vektör garantisi verir, RAG
+  borusunun mekaniğini doğrulamak içindir). Gerçek semantik retrieval için
+  `Embeddings:Provider=OpenAI` + `Embeddings:OpenAI:ApiKey` (user-secrets ile) gerekir.
+- Aynı referans dokümanının/kitabın tekrar yüklenmesi, dosya içeriğinin SHA-256 hash'i
+  üzerinden 409 Conflict ile engellenir (§9); tekrar ingest/extract denemesi de aynı şekilde reddedilir.

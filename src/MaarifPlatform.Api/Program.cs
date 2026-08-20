@@ -1,7 +1,9 @@
 using MaarifPlatform.Application.Extraction;
+using MaarifPlatform.Application.Rag;
 using MaarifPlatform.Application.Storage;
 using MaarifPlatform.Infrastructure.Extraction;
 using MaarifPlatform.Infrastructure.Persistence;
+using MaarifPlatform.Infrastructure.Rag;
 using MaarifPlatform.Infrastructure.Storage;
 using Microsoft.EntityFrameworkCore;
 
@@ -26,6 +28,26 @@ builder.Services.AddScoped<IBookFileStorage, LocalFileStorage>();
 builder.Services.AddScoped<IPdfTextExtractor, DocnetTextExtractor>();
 builder.Services.AddScoped<IQuestionSegmenter, HeuristicQuestionSegmenter>();
 builder.Services.AddScoped<BookExtractionService>();
+
+// §G RAG pipeline'ı. Embeddings:Provider varsayılanı "Local" — dış API anahtarı gerektirmez,
+// yalnızca borunun mekaniğini doğrulamak içindir (bkz. LocalDeterministicEmbeddingProvider'daki not).
+// Gerçek semantik retrieval için appsettings/user-secrets'ta "OpenAI" seçilip ApiKey girilmelidir.
+builder.Services.AddScoped<IReferenceChunker, ParagraphReferenceChunker>();
+builder.Services.Configure<OpenAIEmbeddingOptions>(builder.Configuration.GetSection("Embeddings:OpenAI"));
+builder.Services.AddHttpClient<OpenAIEmbeddingProvider>();
+
+var embeddingProviderName = builder.Configuration["Embeddings:Provider"] ?? "Local";
+if (string.Equals(embeddingProviderName, "OpenAI", StringComparison.OrdinalIgnoreCase))
+{
+    builder.Services.AddScoped<IEmbeddingProvider>(sp => sp.GetRequiredService<OpenAIEmbeddingProvider>());
+}
+else
+{
+    builder.Services.AddScoped<IEmbeddingProvider, LocalDeterministicEmbeddingProvider>();
+}
+
+builder.Services.AddScoped<ReferenceIngestionService>();
+builder.Services.AddScoped<ReferenceSearchService>();
 
 var app = builder.Build();
 
