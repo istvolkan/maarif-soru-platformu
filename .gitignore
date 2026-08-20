@@ -1,0 +1,13 @@
+bin/
+obj/
+*.user
+.vs/
+.vscode/
+*.suo
+
+# Local dev secrets / overrides
+appsettings.*.local.json
+
+# OS
+.DS_Store
+Thumbs.db

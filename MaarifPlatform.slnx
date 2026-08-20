@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/MaarifPlatform.Api/MaarifPlatform.Api.csproj" />
+    <Project Path="src/MaarifPlatform.Application/MaarifPlatform.Application.csproj" />
+    <Project Path="src/MaarifPlatform.Domain/MaarifPlatform.Domain.csproj" />
+    <Project Path="src/MaarifPlatform.Infrastructure/MaarifPlatform.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/MaarifPlatform.Tests/MaarifPlatform.Tests.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,21 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: maarif-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: maarif
+      POSTGRES_USER: maarif
+      POSTGRES_PASSWORD: maarif_dev_only
+    ports:
+      - "5433:5432"
+    volumes:
+      - maarif_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U maarif -d maarif"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  maarif_db_data:

@@ -1,0 +1,6 @@
+@MaarifPlatform.Api_HostAddress = http://localhost:5047
+
+GET {{MaarifPlatform.Api_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
