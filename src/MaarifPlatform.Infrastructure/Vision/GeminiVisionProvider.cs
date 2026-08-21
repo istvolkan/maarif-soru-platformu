@@ -37,36 +37,10 @@ public class GeminiVisionProvider(HttpClient httpClient, IOptions<GeminiOptions>
             "series_connection/force_direction vb.; kimya: bond_type/charge vb.) kullanarak derinlemesine analiz et.",
             ct);
 
-    /// <summary>§6 Mathematical/Scientific Fidelity — ikinci bir AI çağrısı yapmadan deterministik
-    /// tutarlılık kontrolü (RubricEngine'in "kod tabanlı denetim" felsefesiyle aynı çizgide, §29).</summary>
-    public Task<IReadOnlyList<VisualWarning>> ValidateVisualStructureAsync(VisualObservation observation, CancellationToken ct = default)
-    {
-        var warnings = new List<VisualWarning>();
-
-        if (observation.Confidence < 0.5m)
-        {
-            warnings.Add(new VisualWarning("LOW_CONFIDENCE",
-                $"Gözlem güveni düşük ({observation.Confidence:0.00}).", observation.Confidence));
-        }
-
-        var elementIds = observation.Elements.Select(e => e.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        foreach (var relation in observation.Relations)
-        {
-            if (!elementIds.Contains(relation.Subject) || !elementIds.Contains(relation.Object))
-            {
-                warnings.Add(new VisualWarning("DANGLING_RELATION_REFERENCE",
-                    $"'{relation.Subject} {relation.Relation} {relation.Object}' ilişkisi bilinmeyen bir öğeye atıfta bulunuyor.",
-                    relation.Confidence));
-            }
-        }
-
-        if (observation.Elements.Count == 0 && observation.Relations.Count == 0)
-        {
-            warnings.Add(new VisualWarning("EMPTY_OBSERVATION", "Görselden hiçbir öğe/ilişki çıkarılamadı.", observation.Confidence));
-        }
-
-        return Task.FromResult<IReadOnlyList<VisualWarning>>(warnings);
-    }
+    /// <summary>§6 Mathematical/Scientific Fidelity — ortak deterministik doğrulayıcıya delege eder
+    /// (bkz. <see cref="VisualObservationValidator"/>); mantık provider başına tekrar yazılmaz.</summary>
+    public Task<IReadOnlyList<VisualWarning>> ValidateVisualStructureAsync(VisualObservation observation, CancellationToken ct = default) =>
+        Task.FromResult(VisualObservationValidator.Validate(observation));
 
     private async Task<VisualObservation> CallGeminiAsync(byte[] imagePng, string taskPrompt, CancellationToken ct)
     {

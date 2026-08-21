@@ -11,6 +11,7 @@ using MaarifPlatform.Infrastructure.Rag;
 using MaarifPlatform.Infrastructure.Storage;
 using MaarifPlatform.Infrastructure.Vision;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -71,23 +72,31 @@ else
 
 builder.Services.AddScoped<AnalysisOrchestrationService>();
 
-// §3/§7 Vision mimarisi. Vision:Provider varsayılanı "Local" — dış API anahtarı gerektirmez,
-// yalnızca boru mekaniğini doğrulamak içindir (bkz. LocalMockVisionProvider'daki not).
-// §8.1 varsayılan öneri Gemini'dir: Vision:Provider=Gemini + Vision:Gemini:ApiKey ile etkinleşir.
+// §3/§7/§10 Vision mimarisi. Vision:Provider (birincil) varsayılanı "Local" — dış API anahtarı
+// gerektirmez, yalnızca boru mekaniğini doğrulamak içindir (bkz. LocalMockVisionProvider'daki
+// not). §8.1 varsayılan öneri Gemini'dir. Vision:SecondaryProvider boşsa (varsayılan) provider
+// disagreement/consensus akışı tamamen devre dışıdır — ek maliyet yalnızca açıkça
+// yapılandırıldığında oluşur. Tüm somut sağlayıcılar kendi adlarıyla kaydedilir; hangisinin
+// birincil/ikincil olduğuna VisionProviderFactory + VisionRoutingOptions karar verir.
 builder.Services.AddScoped<IPdfPageRenderer, DocnetPageRenderer>();
 builder.Services.AddScoped<IVisionRouter, HeuristicVisionRouter>();
+
+builder.Services.AddScoped<LocalMockVisionProvider>();
+
 builder.Services.Configure<GeminiOptions>(builder.Configuration.GetSection("Vision:Gemini"));
 builder.Services.AddHttpClient<GeminiVisionProvider>();
 
-var visionProviderName = builder.Configuration["Vision:Provider"] ?? "Local";
-if (string.Equals(visionProviderName, "Gemini", StringComparison.OrdinalIgnoreCase))
+builder.Services.Configure<AnthropicVisionOptions>(builder.Configuration.GetSection("Vision:Anthropic"));
+builder.Services.AddScoped<AnthropicVisionProvider>();
+
+builder.Services.AddScoped<IVisionProviderFactory, VisionProviderFactory>();
+
+builder.Services.AddSingleton(Options.Create(new VisionRoutingOptions
 {
-    builder.Services.AddScoped<IVisionProvider>(sp => sp.GetRequiredService<GeminiVisionProvider>());
-}
-else
-{
-    builder.Services.AddScoped<IVisionProvider, LocalMockVisionProvider>();
-}
+    PrimaryProvider = builder.Configuration["Vision:Provider"] ?? "Local",
+    SecondaryProvider = builder.Configuration["Vision:SecondaryProvider"],
+    ConsensusConfidenceThreshold = builder.Configuration.GetValue<decimal?>("Vision:ConsensusConfidenceThreshold") ?? 0.95m
+}));
 
 builder.Services.AddScoped<VisionAnalysisService>();
 

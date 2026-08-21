@@ -6,6 +6,7 @@ using MaarifPlatform.Domain.Entities;
 using MaarifPlatform.Domain.Enums;
 using MaarifPlatform.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace MaarifPlatform.Infrastructure.Vision;
 
@@ -14,18 +15,23 @@ public sealed record VisionAnalysisResult(
     VisualObservation? Observation,
     IReadOnlyList<VisualWarning> ValidationWarnings);
 
-/// <summary>§3/§6 Vision analiz orkestrasyonu: routing kararı → (gerekirse) sayfa render →
-/// asset cache/persist → provider çağrısı → deterministik doğrulama. Kendi <c>SaveChangesAsync</c>'ini
-/// ÇALIŞTIRMAZ — entity'leri DbContext'e ekler, commit çağıranın (AnalysisOrchestrationService)
-/// tek transaction'ına bırakılır. requires_visual=false ise hiçbir DB/PDF/Vision işlemi yapmadan
-/// erken döner — mevcut metin-only akışı bu servisin varlığından etkilenmez.</summary>
+/// <summary>§3/§6/§9/§10 Vision analiz orkestrasyonu: routing kararı → (gerekirse) sayfa render →
+/// asset cache/persist → birincil provider çağrısı → deterministik doğrulama → (düşük güvende)
+/// ikincil provider ile konsensüs kontrolü. Kendi <c>SaveChangesAsync</c>'ini ÇALIŞTIRMAZ —
+/// entity'leri DbContext'e ekler, commit çağıranın (AnalysisOrchestrationService) tek
+/// transaction'ına bırakılır. requires_visual=false ise hiçbir DB/PDF/Vision işlemi yapmadan
+/// erken döner — mevcut metin-only akışı bu servisin varlığından etkilenmez.
+/// SecondaryProvider config'te boşsa consensus akışı tamamen devre dışıdır (ek maliyet yok).</summary>
 public class VisionAnalysisService(
     MaarifDbContext db,
     IBookFileStorage storage,
     IPdfPageRenderer pageRenderer,
     IVisionRouter visionRouter,
-    IVisionProvider visionProvider)
+    IVisionProviderFactory providerFactory,
+    IOptions<VisionRoutingOptions> routingOptions)
 {
+    private readonly VisionRoutingOptions _routing = routingOptions.Value;
+
     public async Task<VisionAnalysisResult> AnalyzeAsync(Question question, QuestionDna originalDna, CancellationToken ct = default)
     {
         var decision = await visionRouter.DecideAsync(
@@ -45,7 +51,6 @@ public class VisionAnalysisService(
         var assetHash = Convert.ToHexString(SHA256.HashData(rendered.PngBytes));
 
         // §26 cache: aynı görüntü bu soru için zaten kaydedilmişse tekrar diske yazma.
-        // (Tam Vision SONUCU cache'i — aynı hash+provider+prompt_version — Phase 2 kapsamı.)
         var alreadyStored = await db.QuestionVisualAssets
             .AnyAsync(a => a.QuestionId == question.Id && a.AssetHash == assetHash, ct);
 
@@ -65,24 +70,44 @@ public class VisionAnalysisService(
             });
         }
 
-        var observation = await visionProvider.AnalyzeQuestionImageAsync(
+        var primaryProvider = providerFactory.Get(_routing.PrimaryProvider);
+        var primaryObservation = await primaryProvider.AnalyzeQuestionImageAsync(
             rendered.PngBytes, originalDna.OriginalQuestion ?? string.Empty, ct);
+        var validationWarnings = (await primaryProvider.ValidateVisualStructureAsync(primaryObservation, ct)).ToList();
 
-        var validationWarnings = await visionProvider.ValidateVisualStructureAsync(observation, ct);
+        RecordVisionRun(question.Id, primaryProvider.Name, primaryObservation.Usage);
 
+        // §9/§10: yalnızca birincil güven eşiğin altındaysa VE bir ikincil sağlayıcı
+        // yapılandırılmışsa ikinci bir Vision çağrısı yapılır — her soru için otomatik
+        // çift-provider çalıştırmak maliyeti gereksiz büyütür.
+        if (!string.IsNullOrWhiteSpace(_routing.SecondaryProvider)
+            && primaryObservation.Confidence < _routing.ConsensusConfidenceThreshold)
+        {
+            var secondaryProvider = providerFactory.Get(_routing.SecondaryProvider);
+            var secondaryObservation = await secondaryProvider.AnalyzeQuestionImageAsync(
+                rendered.PngBytes, originalDna.OriginalQuestion ?? string.Empty, ct);
+
+            RecordVisionRun(question.Id, secondaryProvider.Name, secondaryObservation.Usage);
+
+            validationWarnings.AddRange(VisualConsensusChecker.Compare(primaryObservation, secondaryObservation));
+        }
+
+        return new VisionAnalysisResult(decision, primaryObservation, validationWarnings);
+    }
+
+    private void RecordVisionRun(Guid questionId, string providerName, Application.Providers.AiUsage usage)
+    {
         db.AiRuns.Add(new AiRun
         {
-            QuestionId = question.Id,
+            QuestionId = questionId,
             Stage = PipelineStage.Vision,
-            ModelTier = visionProvider.Name == "local-mock-vision" ? ModelTier.Cheap : ModelTier.Strong,
-            Provider = observation.Usage.Provider,
-            Model = observation.Usage.Model,
-            InputTokens = observation.Usage.InputTokens,
-            OutputTokens = observation.Usage.OutputTokens,
-            CostUsd = observation.Usage.CostUsd,
-            LatencyMs = observation.Usage.LatencyMs
+            ModelTier = providerName == "local-mock-vision" ? ModelTier.Cheap : ModelTier.Strong,
+            Provider = usage.Provider,
+            Model = usage.Model,
+            InputTokens = usage.InputTokens,
+            OutputTokens = usage.OutputTokens,
+            CostUsd = usage.CostUsd,
+            LatencyMs = usage.LatencyMs
         });
-
-        return new VisionAnalysisResult(decision, observation, validationWarnings);
     }
 }
