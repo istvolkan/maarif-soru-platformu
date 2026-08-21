@@ -9,16 +9,23 @@ public sealed record AnalyzeQuestionRequest(
     string Subject,
     IReadOnlyList<GroundingReference> Grounding);
 
+/// <summary>§E rubrik kriterlerinden biri için LLM'in verdiği HAM değerlendirme. Ağırlıklandırma
+/// ve nihai TransformationLevel kararı burada değil, deterministik RubricEngine'de (Application/Rubric)
+/// hesaplanır — §A tasarım kararı: "LLM'e puanla değil, kriter bazlı ham değerlendirme sor".</summary>
+public sealed record CriterionEvaluation(
+    string Criterion,
+    int Score,
+    string Explanation,
+    string? SourceRef,
+    bool CriticalGateViolated);
+
 public sealed record AnalyzeQuestionResult(
     string MathematicalCore,
     string? LearningOutcomeCode,
     string FieldSkill,
     string ConceptualSkill,
-    bool RequiresContext,
     bool ContextIsDecorative,
-    int MaarifAlignmentScore,
-    IReadOnlyList<string> AlignmentIssues,
-    string TransformationLevel,
+    IReadOnlyList<CriterionEvaluation> CriterionEvaluations,
     bool ManualReviewRequired,
     string? ManualReviewReason,
     AiUsage Usage);

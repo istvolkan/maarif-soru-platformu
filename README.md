@@ -8,13 +8,13 @@ Mimari tasarımın tam metni: proje kickoff'unda paylaşılan Artifact (A–O ta
 ```
 src/
   MaarifPlatform.Domain          — entity'ler, enum'lar (dış bağımlılık yok, Pgvector.Vector hariç)
-  MaarifPlatform.Application     — ILLMProvider + Extraction/Storage/Rag sözleşmeleri ve DTO'lar (§11)
+  MaarifPlatform.Application     — ILLMProvider + Extraction/Storage/Rag sözleşmeleri, RubricEngine (§E)
   MaarifPlatform.Infrastructure  — EF Core (Npgsql + pgvector), DbContext, migration'lar,
                                     PDF extraction (Docnet.Core + heuristic segmenter),
-                                    RAG ingestion + retrieval (chunker + embedding sağlayıcıları)
-  MaarifPlatform.Api             — ASP.NET Core Web API (composition root), Books/ReferenceDocuments controller'ları
+                                    RAG ingestion + retrieval, Analysis pipeline (Anthropic SDK + mock sağlayıcı)
+  MaarifPlatform.Api             — ASP.NET Core Web API (composition root), Books/ReferenceDocuments/Questions controller'ları
 tests/
-  MaarifPlatform.Tests           — xUnit (segmenter, chunker, embedding provider testleri)
+  MaarifPlatform.Tests           — xUnit (segmenter, chunker, embedding provider, rubric engine testleri)
 docker-compose.yml                — lokal PostgreSQL + pgvector
 ```
 
@@ -24,7 +24,10 @@ Sprint 2 (§O Faz 1 devamı / §K madde 2-4): PDF → sayfa → soru bloğu → 
 Sprint 3 (§O Faz 1 devamı / §K madde 1, §G RAG mimarisi): MEB referans dokümanı yükleme,
 chunking, embedding, pgvector retrieval — `POST /api/reference-documents`,
 `POST /api/reference-documents/{id}/ingest`, `GET /api/reference-documents/search`.
-Auth/RBAC ve gerçek Analysis/Judge AI entegrasyonu sonraki sprintlerde eklenecek.
+Sprint 4 (§O Faz 2 / §4+§8 Analysis AI): RAG grounding çekme, ILLMProvider.AnalyzeQuestionAsync
+(gerçek Anthropic sağlayıcısı + anahtar gerektirmeyen mock), deterministik RubricEngine (§E),
+AlignmentScore kayıtları — `POST /api/questions/{id}/analyze`, `GET /api/questions/{id}`.
+Auth/RBAC ve Transformation/Quality Judge sonraki sprintlerde eklenecek.
 
 ### PDF kütüphanesi seçimi hakkında not
 
@@ -90,3 +93,14 @@ dotnet ef migrations add <İsim> \
   `Embeddings:Provider=OpenAI` + `Embeddings:OpenAI:ApiKey` (user-secrets ile) gerekir.
 - Aynı referans dokümanının/kitabın tekrar yüklenmesi, dosya içeriğinin SHA-256 hash'i
   üzerinden 409 Conflict ile engellenir (§9); tekrar ingest/extract denemesi de aynı şekilde reddedilir.
+- Analysis AI sağlayıcısı `appsettings.json`'daki `Ai:Provider` ile seçilir. Varsayılan
+  **"Local"** — `LocalHeuristicLLMProvider`, dış API anahtarı gerektirmez ama yapısal
+  sinyallere (grounding/şık sayısı/gövde uzunluğu) dayanan bir MOCK'tur, gerçek matematiksel/
+  pedagojik değerlendirme yapmaz. Gerçek değerlendirme için `Ai:Provider=Anthropic` +
+  `Ai:Anthropic:ApiKey` (resmi `Anthropic` NuGet paketi, tool-use ile zorunlu yapılandırılmış
+  çıktı) gerekir. LLM yalnızca kriter başına ham puan döner; ağırlıklandırma ve nihai
+  TransformationLevel kararı `RubricEngine`'de (Application/Rubric) deterministik hesaplanır —
+  bu ayrım §A tasarım kararıdır.
+- RAG'de hiç grounding chunk'ı bulunamazsa (§elestiri madde 1/9) skor ne olursa olsun soru
+  `ManualReviewRequired` durumuna düşer; kazanım/beceri iddiası hiçbir zaman kaynaksız
+  "Analyzed" sayılmaz.

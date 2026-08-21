@@ -1,6 +1,9 @@
 using MaarifPlatform.Application.Extraction;
+using MaarifPlatform.Application.Providers;
 using MaarifPlatform.Application.Rag;
 using MaarifPlatform.Application.Storage;
+using MaarifPlatform.Infrastructure.Ai;
+using MaarifPlatform.Infrastructure.Analysis;
 using MaarifPlatform.Infrastructure.Extraction;
 using MaarifPlatform.Infrastructure.Persistence;
 using MaarifPlatform.Infrastructure.Rag;
@@ -48,6 +51,23 @@ else
 
 builder.Services.AddScoped<ReferenceIngestionService>();
 builder.Services.AddScoped<ReferenceSearchService>();
+
+// §4/§H Analysis pipeline'ı. Ai:Provider varsayılanı "Local" — dış API anahtarı gerektirmez,
+// yalnızca yapısal sinyallere dayanan bir mock'tur (bkz. LocalHeuristicLLMProvider'daki not).
+// Gerçek pedagojik/matematiksel değerlendirme için Ai:Provider=Anthropic + Ai:Anthropic:ApiKey gerekir.
+builder.Services.Configure<AnthropicOptions>(builder.Configuration.GetSection("Ai:Anthropic"));
+
+var aiProviderName = builder.Configuration["Ai:Provider"] ?? "Local";
+if (string.Equals(aiProviderName, "Anthropic", StringComparison.OrdinalIgnoreCase))
+{
+    builder.Services.AddScoped<ILLMProvider, AnthropicLLMProvider>();
+}
+else
+{
+    builder.Services.AddScoped<ILLMProvider, LocalHeuristicLLMProvider>();
+}
+
+builder.Services.AddScoped<AnalysisOrchestrationService>();
 
 var app = builder.Build();
 
