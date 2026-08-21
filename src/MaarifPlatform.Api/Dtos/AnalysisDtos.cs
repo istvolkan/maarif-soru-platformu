@@ -5,6 +5,7 @@ public record AnalysisSummaryResponse(
     string TransformationLevel,
     bool ManualReviewRequired,
     int GroundingChunksUsed,
+    bool RequiresVisual,
     string Provider,
     string Model,
     int InputTokens,
@@ -29,4 +30,8 @@ public record QuestionDetailResponse(
     int? MaarifAlignmentScore,
     string? TransformationLevel,
     bool EditorRequired,
+    bool RequiresVisual,
+    string? VisualType,
+    decimal? VisualConfidence,
+    string? VisualDescription,
     IReadOnlyList<AlignmentScoreResponse> AlignmentScores);

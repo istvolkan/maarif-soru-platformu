@@ -2,12 +2,14 @@ using MaarifPlatform.Application.Extraction;
 using MaarifPlatform.Application.Providers;
 using MaarifPlatform.Application.Rag;
 using MaarifPlatform.Application.Storage;
+using MaarifPlatform.Application.Vision;
 using MaarifPlatform.Infrastructure.Ai;
 using MaarifPlatform.Infrastructure.Analysis;
 using MaarifPlatform.Infrastructure.Extraction;
 using MaarifPlatform.Infrastructure.Persistence;
 using MaarifPlatform.Infrastructure.Rag;
 using MaarifPlatform.Infrastructure.Storage;
+using MaarifPlatform.Infrastructure.Vision;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -68,6 +70,26 @@ else
 }
 
 builder.Services.AddScoped<AnalysisOrchestrationService>();
+
+// §3/§7 Vision mimarisi. Vision:Provider varsayılanı "Local" — dış API anahtarı gerektirmez,
+// yalnızca boru mekaniğini doğrulamak içindir (bkz. LocalMockVisionProvider'daki not).
+// §8.1 varsayılan öneri Gemini'dir: Vision:Provider=Gemini + Vision:Gemini:ApiKey ile etkinleşir.
+builder.Services.AddScoped<IPdfPageRenderer, DocnetPageRenderer>();
+builder.Services.AddScoped<IVisionRouter, HeuristicVisionRouter>();
+builder.Services.Configure<GeminiOptions>(builder.Configuration.GetSection("Vision:Gemini"));
+builder.Services.AddHttpClient<GeminiVisionProvider>();
+
+var visionProviderName = builder.Configuration["Vision:Provider"] ?? "Local";
+if (string.Equals(visionProviderName, "Gemini", StringComparison.OrdinalIgnoreCase))
+{
+    builder.Services.AddScoped<IVisionProvider>(sp => sp.GetRequiredService<GeminiVisionProvider>());
+}
+else
+{
+    builder.Services.AddScoped<IVisionProvider, LocalMockVisionProvider>();
+}
+
+builder.Services.AddScoped<VisionAnalysisService>();
 
 var app = builder.Build();
 

@@ -1,13 +1,19 @@
+using MaarifPlatform.Application.Vision;
+
 namespace MaarifPlatform.Application.Providers;
 
 // §4 Eski Soru Analizi — ANALYSIS ENGINE girdi/çıktısı.
+// Visual alanı Vision mimarisi eklentisidir (sona, opsiyonel eklendi — mevcut pozisyonel
+// çağrılar bozulmaz). requires_visual=false olan sorularda null kalır; §29 kritik kural:
+// bu alan bir GÖZLEMdir, reasoning modeline "ground truth" olarak değil veri olarak sunulur.
 public sealed record AnalyzeQuestionRequest(
     string OriginalQuestion,
     IReadOnlyList<string> OriginalOptions,
     string? OriginalAnswer,
     int Grade,
     string Subject,
-    IReadOnlyList<GroundingReference> Grounding);
+    IReadOnlyList<GroundingReference> Grounding,
+    VisualObservation? Visual = null);
 
 /// <summary>§E rubrik kriterlerinden biri için LLM'in verdiği HAM değerlendirme. Ağırlıklandırma
 /// ve nihai TransformationLevel kararı burada değil, deterministik RubricEngine'de (Application/Rubric)

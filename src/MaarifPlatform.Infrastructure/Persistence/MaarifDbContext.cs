@@ -17,6 +17,7 @@ public class MaarifDbContext(DbContextOptions<MaarifDbContext> options) : DbCont
     public DbSet<Question> Questions => Set<Question>();
     public DbSet<QuestionVersion> QuestionVersions => Set<QuestionVersion>();
     public DbSet<QuestionDna> QuestionDnas => Set<QuestionDna>();
+    public DbSet<QuestionVisualAsset> QuestionVisualAssets => Set<QuestionVisualAsset>();
 
     public DbSet<LearningOutcome> LearningOutcomes => Set<LearningOutcome>();
     public DbSet<AlignmentScore> AlignmentScores => Set<AlignmentScore>();

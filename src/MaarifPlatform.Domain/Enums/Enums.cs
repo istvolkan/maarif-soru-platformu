@@ -83,6 +83,7 @@ public enum PipelineStage
 {
     Classification,
     Extraction,
+    Vision,
     Analysis,
     Transformation,
     DistractorGeneration,

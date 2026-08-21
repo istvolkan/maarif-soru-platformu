@@ -62,12 +62,43 @@ public class QuestionDnaConfiguration : IEntityTypeConfiguration<QuestionDna>
             nameof(QuestionDna.OriginalOptionsJson), nameof(QuestionDna.RepresentationTypesJson),
             nameof(QuestionDna.ReasoningTypesJson), nameof(QuestionDna.AlignmentIssuesJson),
             nameof(QuestionDna.NewOptionsJson), nameof(QuestionDna.QualityFlagsJson),
-            nameof(QuestionDna.SourceReferencesJson), nameof(QuestionDna.ExtensionsJson)
+            nameof(QuestionDna.SourceReferencesJson), nameof(QuestionDna.ExtensionsJson),
+            nameof(QuestionDna.VisualElementsJson), nameof(QuestionDna.VisualRelationsJson),
+            nameof(QuestionDna.VisualTextJson), nameof(QuestionDna.VisualSymbolsJson),
+            nameof(QuestionDna.VisualMeasurementsJson), nameof(QuestionDna.VisualWarningsJson)
         })
         {
             b.Property(jsonProp).HasColumnType("jsonb");
         }
 
+        b.Property(e => e.VisualConfidence).HasPrecision(5, 4);
+
         b.HasIndex(e => e.LearningOutcomeCode);
+        // Vision Router'ın "requires_visual=true, henüz işlenmemiş" sorgusu bu indekse dayanır.
+        b.HasIndex(e => e.RequiresVisual);
+    }
+}
+
+public class QuestionVisualAssetConfiguration : IEntityTypeConfiguration<QuestionVisualAsset>
+{
+    public void Configure(EntityTypeBuilder<QuestionVisualAsset> b)
+    {
+        b.ToTable("question_visual_assets");
+        b.HasKey(e => e.Id);
+        b.Property(e => e.StorageUri).HasMaxLength(1000).IsRequired();
+        b.Property(e => e.BoundingBoxJson).HasColumnType("jsonb");
+        b.Property(e => e.AssetHash).HasMaxLength(128).IsRequired();
+        // §26 cache: aynı görsel aynı sağlayıcı/model/prompt sürümüyle tekrar işlenmesin.
+        b.HasIndex(e => e.AssetHash);
+
+        b.HasOne(e => e.Question)
+            .WithMany()
+            .HasForeignKey(e => e.QuestionId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        b.HasOne(e => e.BookPage)
+            .WithMany()
+            .HasForeignKey(e => e.BookPageId)
+            .OnDelete(DeleteBehavior.SetNull);
     }
 }

@@ -19,7 +19,7 @@ public class QuestionsController(MaarifDbContext db, AnalysisOrchestrationServic
             var result = await analysisService.AnalyzeAsync(id, ct);
             return Ok(new AnalysisSummaryResponse(
                 result.WeightedScore, result.TransformationLevel, result.ManualReviewRequired,
-                result.GroundingChunksUsed, result.Usage.Provider, result.Usage.Model,
+                result.GroundingChunksUsed, result.RequiresVisual, result.Usage.Provider, result.Usage.Model,
                 result.Usage.InputTokens, result.Usage.OutputTokens, result.Usage.CostUsd, result.Usage.LatencyMs));
         }
         catch (InvalidOperationException ex)
@@ -57,6 +57,10 @@ public class QuestionsController(MaarifDbContext db, AnalysisOrchestrationServic
             latestVersion?.Dna?.MaarifAlignmentScore,
             latestVersion?.Dna?.TransformationLevel?.ToString(),
             latestVersion?.Dna?.EditorRequired ?? false,
+            latestVersion?.Dna?.RequiresVisual ?? false,
+            latestVersion?.Dna?.VisualType,
+            latestVersion?.Dna?.VisualConfidence,
+            latestVersion?.Dna?.VisualDescription,
             alignmentScores);
     }
 }

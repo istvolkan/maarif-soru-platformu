@@ -27,6 +27,10 @@ chunking, embedding, pgvector retrieval — `POST /api/reference-documents`,
 Sprint 4 (§O Faz 2 / §4+§8 Analysis AI): RAG grounding çekme, ILLMProvider.AnalyzeQuestionAsync
 (gerçek Anthropic sağlayıcısı + anahtar gerektirmeyen mock), deterministik RubricEngine (§E),
 AlignmentScore kayıtları — `POST /api/questions/{id}/analyze`, `GET /api/questions/{id}`.
+Sprint 5 (Multimodal/Vision Question Processing, Phase 1): sayfa rasterizasyonu (Docnet.Core),
+ücretsiz heuristic VisionRouter, IVisionProvider (Gemini + anahtar gerektirmeyen mock),
+QuestionDna görsel alanları + `question_visual_assets` tablosu, Analysis pipeline'ının
+vision-aware hale getirilmesi.
 Auth/RBAC ve Transformation/Quality Judge sonraki sprintlerde eklenecek.
 
 ### PDF kütüphanesi seçimi hakkında not
@@ -104,3 +108,17 @@ dotnet ef migrations add <İsim> \
 - RAG'de hiç grounding chunk'ı bulunamazsa (§elestiri madde 1/9) skor ne olursa olsun soru
   `ManualReviewRequired` durumuna düşer; kazanım/beceri iddiası hiçbir zaman kaynaksız
   "Analyzed" sayılmaz.
+- Vision sağlayıcısı `appsettings.json`'daki `Vision:Provider` ile seçilir. Varsayılan
+  **"Local"** — `LocalMockVisionProvider`, dış API anahtarı gerektirmez ama her zaman
+  confidence=0 + MOCK uyarısı döner, bu yüzden görsel gerektiren bir soru asla otomatik
+  "Analyzed" olmaz. Gerçek görsel analiz için `Vision:Provider=Gemini` +
+  `Vision:Gemini:ApiKey` gerekir (ham HTTP ile Google'ın Generative Language API'sine bağlanır,
+  yeni bir NuGet bağımlılığı eklenmedi — bkz. PDF kütüphanesi notu). `GeminiOptions.Model`
+  varsayılanı doğrulanmadan güvenilmemeli; devreye almadan önce güncel bir model ID ile
+  appsettings üzerinden teyit edilmelidir.
+- `HeuristicVisionRouter` her soruyu Vision API'sine göndermez — önce ücretsiz anahtar kelime
+  taraması yapar (Türkçe noktalı biçim + ASCII'ye katlanmış yedek, eski/OCR'lı metinler için).
+  Yalnızca `requires_visual=true` işaretlenen sorularda sayfa render edilir ve Vision
+  sağlayıcısı çağrılır (§9 maliyet ilkesi).
+- Vision analizi mevcut "Analyzed" `QuestionVersion` satırına eklenir, yeni bir versiyon
+  ÜRETMEZ — vision, analysis'in girdisidir, ayrı bir pipeline aşaması değil.

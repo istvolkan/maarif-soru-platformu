@@ -6,6 +6,7 @@ using MaarifPlatform.Domain.Entities;
 using MaarifPlatform.Domain.Enums;
 using MaarifPlatform.Infrastructure.Persistence;
 using MaarifPlatform.Infrastructure.Rag;
+using MaarifPlatform.Infrastructure.Vision;
 using Microsoft.EntityFrameworkCore;
 
 namespace MaarifPlatform.Infrastructure.Analysis;
@@ -15,17 +16,20 @@ public sealed record AnalysisSummary(
     string TransformationLevel,
     bool ManualReviewRequired,
     int GroundingChunksUsed,
+    bool RequiresVisual,
     AiUsage Usage);
 
-/// <summary>§4/§8/§A Analysis pipeline orkestrasyonu: soru yükle → RAG grounding çek →
-/// ILLMProvider.AnalyzeQuestionAsync çağır → AiRun kaydet → RubricEngine ile deterministik
-/// ağırlıklandır → yeni QuestionVersion/QuestionDna/AlignmentScore kayıtları → durum geçişi.
-/// RAG hiç sonuç döndürmezse (§elestiri madde 1/9) skor ne olursa olsun ManualReviewRequired'a
-/// düşer — grounding'siz kazanım iddiası asla Analyzed sayılmaz.</summary>
+/// <summary>§4/§8/§A Analysis pipeline orkestrasyonu: soru yükle → (gerekirse) Vision analizi →
+/// RAG grounding çek → ILLMProvider.AnalyzeQuestionAsync çağır → AiRun kaydet → RubricEngine ile
+/// deterministik ağırlıklandır → yeni QuestionVersion/QuestionDna/AlignmentScore kayıtları →
+/// durum geçişi. RAG hiç sonuç döndürmezse (§elestiri madde 1/9) skor ne olursa olsun
+/// ManualReviewRequired'a düşer — grounding'siz kazanım iddiası asla Analyzed sayılmaz. Aynı
+/// kural görsel analiz için de geçerlidir: Vision gözleminde uyarı/düşük güven varsa editöre düşer.</summary>
 public class AnalysisOrchestrationService(
     MaarifDbContext db,
     ILLMProvider llmProvider,
-    ReferenceSearchService searchService)
+    ReferenceSearchService searchService,
+    VisionAnalysisService visionAnalysisService)
 {
     public async Task<AnalysisSummary> AnalyzeAsync(Guid questionId, CancellationToken ct = default)
     {
@@ -49,6 +53,8 @@ public class AnalysisOrchestrationService(
         var grade = originalDna.Grade ?? 0;
         var subject = originalDna.Subject ?? string.Empty;
 
+        var visionResult = await visionAnalysisService.AnalyzeAsync(question, originalDna, ct);
+
         var searchResults = await searchService.SearchAsync(
             originalDna.OriginalQuestion ?? string.Empty, topK: 5, grade: grade == 0 ? null : grade,
             subject: string.IsNullOrEmpty(subject) ? null : subject, ct: ct);
@@ -63,7 +69,8 @@ public class AnalysisOrchestrationService(
             originalDna.OriginalAnswer,
             grade,
             subject,
-            grounding);
+            grounding,
+            visionResult.Observation);
 
         var result = await llmProvider.AnalyzeQuestionAsync(request, ct);
 
@@ -98,7 +105,12 @@ public class AnalysisOrchestrationService(
         };
 
         var groundingInsufficient = grounding.Count == 0;
-        var editorRequired = rubric.CriticalGateFailed || result.ManualReviewRequired || groundingInsufficient;
+
+        var observation = visionResult.Observation;
+        var allVisualWarnings = (observation?.Warnings ?? []).Concat(visionResult.ValidationWarnings).ToList();
+        var visualIssues = observation is not null && (observation.Confidence < 0.5m || allVisualWarnings.Count > 0);
+
+        var editorRequired = rubric.CriticalGateFailed || result.ManualReviewRequired || groundingInsufficient || visualIssues;
 
         var dna = new QuestionDna
         {
@@ -125,7 +137,19 @@ public class AnalysisOrchestrationService(
             TransformationLevel = rubric.Level,
             QualityFlagsJson = JsonSerializer.Serialize(rubric.MissingCriteria.Select(m => $"missing_criterion:{m}")),
             EditorRequired = editorRequired,
-            DnaSchemaVersion = "1.0"
+            DnaSchemaVersion = "1.0",
+
+            // Vision mimarisi — requires_visual=false ise tüm alanlar null/default kalır (§9).
+            RequiresVisual = visionResult.Decision.RequiresVisual,
+            VisualType = observation?.VisualType ?? visionResult.Decision.VisualType,
+            VisualDescription = observation?.Description,
+            VisualConfidence = observation?.Confidence,
+            VisualElementsJson = observation is null ? null : JsonSerializer.Serialize(observation.Elements),
+            VisualRelationsJson = observation is null ? null : JsonSerializer.Serialize(observation.Relations),
+            VisualTextJson = observation is null ? null : JsonSerializer.Serialize(observation.VisualText),
+            VisualSymbolsJson = observation is null ? null : JsonSerializer.Serialize(observation.Symbols),
+            VisualMeasurementsJson = observation is null ? null : JsonSerializer.Serialize(observation.Measurements),
+            VisualWarningsJson = observation is null ? null : JsonSerializer.Serialize(allVisualWarnings)
         };
 
         db.QuestionVersions.Add(version);
@@ -151,6 +175,8 @@ public class AnalysisOrchestrationService(
 
         await db.SaveChangesAsync(ct);
 
-        return new AnalysisSummary(rubric.WeightedScore, rubric.Level.ToString(), editorRequired, grounding.Count, result.Usage);
+        return new AnalysisSummary(
+            rubric.WeightedScore, rubric.Level.ToString(), editorRequired, grounding.Count,
+            visionResult.Decision.RequiresVisual, result.Usage);
     }
 }
