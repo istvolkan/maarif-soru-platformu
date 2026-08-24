@@ -31,7 +31,15 @@ Sprint 5 (Multimodal/Vision Question Processing, Phase 1): sayfa rasterizasyonu 
 ücretsiz heuristic VisionRouter, IVisionProvider (Gemini + anahtar gerektirmeyen mock),
 QuestionDna görsel alanları + `question_visual_assets` tablosu, Analysis pipeline'ının
 vision-aware hale getirilmesi.
-Auth/RBAC ve Transformation/Quality Judge sonraki sprintlerde eklenecek.
+Sprint 6: ikinci Vision sağlayıcı (Anthropic) + provider disagreement/consensus.
+Sprint 7 (Auth/RBAC): JWT bearer authentication + rol tabanlı authorization
+(`Admin, Editor, Teacher, Reviewer`), mevcut `AppUser`/`users` tablosu üzerine kurulu.
+Açık self-registration yok — ilk Admin uygulama açılışında `Auth:BootstrapAdmin`
+config'inden otomatik seed edilir, sonraki kullanıcılar `POST /api/users` (Admin-only)
+ile oluşturulur. `POST /api/auth/login` JWT döner; Books/ReferenceDocuments/Questions
+controller'larında GET uçları herhangi bir role, mutasyon uçları (`Create`, `Extract`,
+`Ingest`, `Analyze`) `Admin,Editor` rolüne kısıtlıdır.
+Transformation/Quality Judge sonraki bir sprintte eklenecek.
 
 ### PDF kütüphanesi seçimi hakkında not
 
@@ -122,3 +130,8 @@ dotnet ef migrations add <İsim> \
   sağlayıcısı çağrılır (§9 maliyet ilkesi).
 - Vision analizi mevcut "Analyzed" `QuestionVersion` satırına eklenir, yeni bir versiyon
   ÜRETMEZ — vision, analysis'in girdisidir, ayrı bir pipeline aşaması değil.
+- `Auth:Jwt:SigningKey` ve `Auth:BootstrapAdmin:Email/Password`, `appsettings.Development.json`
+  içindeki dev-only değerlerdir (aynı DB bağlantı dizesi kuralı); gerçek ortamlarda
+  user-secrets/key vault kullanılmalıdır.
+- Bu sprintte refresh token YOK — bilinçli MVP sınırı. JWT `Auth:Jwt:ExpiryMinutes` sonunda
+  süresi dolar, istemci tekrar `POST /api/auth/login` yapmalıdır.

@@ -1,17 +1,20 @@
 using MaarifPlatform.Api.Dtos;
 using MaarifPlatform.Infrastructure.Analysis;
 using MaarifPlatform.Infrastructure.Persistence;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
 namespace MaarifPlatform.Api.Controllers;
 
-/// <summary>§4/§J Analysis pipeline API yüzeyi. Auth/RBAC henüz yok.</summary>
+/// <summary>§4/§J Analysis pipeline API yüzeyi.</summary>
 [ApiController]
 [Route("api/questions")]
+[Authorize]
 public class QuestionsController(MaarifDbContext db, AnalysisOrchestrationService analysisService) : ControllerBase
 {
     [HttpPost("{id:guid}/analyze")]
+    [Authorize(Roles = "Admin,Editor")]
     public async Task<ActionResult<AnalysisSummaryResponse>> Analyze(Guid id, CancellationToken ct)
     {
         try

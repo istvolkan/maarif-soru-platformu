@@ -4,15 +4,17 @@ using MaarifPlatform.Application.Storage;
 using MaarifPlatform.Domain.Entities;
 using MaarifPlatform.Infrastructure.Extraction;
 using MaarifPlatform.Infrastructure.Persistence;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
 namespace MaarifPlatform.Api.Controllers;
 
 /// <summary>§13/§20 MVP — Book Management + Question Extraction + Question Database'in
-/// ilk API yüzeyi. Auth/RBAC henüz yok (Sprint 3'te eklenecek, §O).</summary>
+/// ilk API yüzeyi.</summary>
 [ApiController]
 [Route("api/books")]
+[Authorize]
 public class BooksController(MaarifDbContext db, IBookFileStorage storage, BookExtractionService extractionService)
     : ControllerBase
 {
@@ -21,6 +23,7 @@ public class BooksController(MaarifDbContext db, IBookFileStorage storage, BookE
 
     [HttpPost]
     [RequestSizeLimit(MaxFileSizeBytes)]
+    [Authorize(Roles = "Admin,Editor")]
     public async Task<ActionResult<BookResponse>> Create([FromForm] CreateBookRequest request, CancellationToken ct)
     {
         if (request.File.Length == 0)
@@ -68,6 +71,7 @@ public class BooksController(MaarifDbContext db, IBookFileStorage storage, BookE
     }
 
     [HttpPost("{id:guid}/extract")]
+    [Authorize(Roles = "Admin,Editor")]
     public async Task<ActionResult<BookExtractionResult>> Extract(Guid id, CancellationToken ct)
     {
         try

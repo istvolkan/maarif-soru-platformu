@@ -14,6 +14,7 @@ public class AppUserConfiguration : IEntityTypeConfiguration<AppUser>
         b.Property(e => e.Email).HasMaxLength(320).IsRequired();
         b.HasIndex(e => e.Email).IsUnique();
         b.Property(e => e.Role).HasConversion<string>().HasMaxLength(30);
+        b.Property(e => e.PasswordHash).HasMaxLength(500).IsRequired();
     }
 }
 

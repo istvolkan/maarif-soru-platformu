@@ -1,17 +1,24 @@
+using System.Text;
+using MaarifPlatform.Application.Auth;
 using MaarifPlatform.Application.Extraction;
 using MaarifPlatform.Application.Providers;
 using MaarifPlatform.Application.Rag;
 using MaarifPlatform.Application.Storage;
 using MaarifPlatform.Application.Vision;
+using MaarifPlatform.Domain.Entities;
 using MaarifPlatform.Infrastructure.Ai;
 using MaarifPlatform.Infrastructure.Analysis;
+using MaarifPlatform.Infrastructure.Auth;
 using MaarifPlatform.Infrastructure.Extraction;
 using MaarifPlatform.Infrastructure.Persistence;
 using MaarifPlatform.Infrastructure.Rag;
 using MaarifPlatform.Infrastructure.Storage;
 using MaarifPlatform.Infrastructure.Vision;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using Microsoft.IdentityModel.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -100,6 +107,27 @@ builder.Services.AddSingleton(Options.Create(new VisionRoutingOptions
 
 builder.Services.AddScoped<VisionAnalysisService>();
 
+// Sprint 7 Auth/RBAC. JWT bearer, refresh token YOK (bilinçli MVP sınırı — bkz. README).
+// İlk Admin kullanıcısı açık self-registration yerine BootstrapAdminInitializer ile seed edilir.
+builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection("Auth:Jwt"));
+builder.Services.Configure<BootstrapAdminOptions>(builder.Configuration.GetSection("Auth:BootstrapAdmin"));
+builder.Services.AddScoped<IPasswordHasher<AppUser>, PasswordHasher<AppUser>>();
+builder.Services.AddScoped<IJwtTokenService, JwtTokenService>();
+builder.Services.AddScoped<AuthService>();
+
+var jwt = builder.Configuration.GetSection("Auth:Jwt").Get<JwtOptions>()
+    ?? throw new InvalidOperationException("Auth:Jwt tanımlı değil.");
+
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(o => o.TokenValidationParameters = new TokenValidationParameters
+    {
+        ValidIssuer = jwt.Issuer,
+        ValidAudience = jwt.Audience,
+        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwt.SigningKey)),
+        ClockSkew = TimeSpan.FromMinutes(1)
+    });
+builder.Services.AddAuthorization();
+
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
@@ -111,6 +139,7 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
+app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
@@ -121,5 +150,10 @@ app.MapGet("/health", async (MaarifDbContext db) =>
     var canConnect = await db.Database.CanConnectAsync();
     return Results.Ok(new { status = "ok", database = canConnect ? "connected" : "unreachable" });
 });
+
+using (var scope = app.Services.CreateScope())
+{
+    await BootstrapAdminInitializer.EnsureSeededAsync(scope.ServiceProvider);
+}
 
 app.Run();
