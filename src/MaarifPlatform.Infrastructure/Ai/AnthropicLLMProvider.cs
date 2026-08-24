@@ -8,14 +8,18 @@ using Microsoft.Extensions.Options;
 
 namespace MaarifPlatform.Infrastructure.Ai;
 
-/// <summary>§11/§H gerçek Analysis sağlayıcısı — Anthropic Messages API üzerinden, tool-calling
-/// ile zorunlu yapılandırılmış çıktı (§I). LLM yalnızca kriter başına HAM puan döner;
-/// ağırlıklandırma ve nihai karar RubricEngine'de (Application/Rubric) deterministik hesaplanır.
-/// Yalnızca AnalyzeQuestionAsync implemente edilmiştir — Transform/Judge/Generate ileriki
-/// sprintlerde eklenecek (bkz. LocalHeuristicLLMProvider'daki simetrik kapsam).</summary>
+/// <summary>§11/§H gerçek Analysis/Transformation/Judge sağlayıcısı — Anthropic Messages API
+/// üzerinden, tool-calling ile zorunlu yapılandırılmış çıktı (§I). Analyze'de LLM yalnızca
+/// kriter başına HAM puan döner; ağırlıklandırma ve nihai karar RubricEngine'de (Application/Rubric)
+/// deterministik hesaplanır. Transform/Judge için LLM nihai çıktıyı doğrudan üretir (bkz.
+/// EvaluateQuestionResult — kriter bazlı ayrıştırma yok, RubricEngine'i kullanmaz).
+/// GenerateQuestionAsync ileriki bir sprintte eklenecek (bkz. LocalHeuristicLLMProvider'daki
+/// simetrik kapsam).</summary>
 public class AnthropicLLMProvider : ILLMProvider
 {
     private const string ToolName = "submit_analysis";
+    private const string TransformToolName = "submit_transformation";
+    private const string EvaluateToolName = "submit_evaluation";
 
     private readonly AnthropicOptions _options;
     private readonly AnthropicClient _client;
@@ -70,14 +74,70 @@ public class AnthropicLLMProvider : ILLMProvider
         return ParseResult(toolUse.Input, usage);
     }
 
-    public Task<TransformQuestionResult> TransformQuestionAsync(TransformQuestionRequest request, CancellationToken ct = default)
-        => throw new NotImplementedException("Transformation Sprint 5'te eklenecek.");
+    public async Task<TransformQuestionResult> TransformQuestionAsync(TransformQuestionRequest request, CancellationToken ct = default)
+    {
+        var parameters = new MessageCreateParams
+        {
+            Model = _options.Model,
+            MaxTokens = _options.MaxTokens,
+            System = BuildTransformSystemPrompt(request),
+            Tools = [BuildTransformationTool()],
+            ToolChoice = new ToolChoiceTool { Name = TransformToolName },
+            Messages = [new() { Role = Role.User, Content = request.OriginalQuestion }],
+        };
 
-    public Task<EvaluateQuestionResult> EvaluateQuestionAsync(EvaluateQuestionRequest request, CancellationToken ct = default)
-        => throw new NotImplementedException("Quality Judge Sprint 5'te eklenecek.");
+        var stopwatch = Stopwatch.StartNew();
+        var response = await _client.Messages.Create(parameters, ct);
+        stopwatch.Stop();
+
+        var toolUse = response.Content
+            .Select(b => b.Value)
+            .OfType<ToolUseBlock>()
+            .FirstOrDefault(b => b.Name == TransformToolName)
+            ?? throw new InvalidOperationException("Anthropic yanıtında beklenen submit_transformation tool_use bloğu bulunamadı.");
+
+        var usage = BuildUsage(response, stopwatch);
+        return ParseTransformResult(toolUse.Input, usage);
+    }
+
+    public async Task<EvaluateQuestionResult> EvaluateQuestionAsync(EvaluateQuestionRequest request, CancellationToken ct = default)
+    {
+        var parameters = new MessageCreateParams
+        {
+            Model = _options.Model,
+            MaxTokens = _options.MaxTokens,
+            System = BuildEvaluateSystemPrompt(request),
+            Tools = [BuildEvaluationTool()],
+            ToolChoice = new ToolChoiceTool { Name = EvaluateToolName },
+            Messages = [new() { Role = Role.User, Content = BuildEvaluateUserContent(request) }],
+        };
+
+        var stopwatch = Stopwatch.StartNew();
+        var response = await _client.Messages.Create(parameters, ct);
+        stopwatch.Stop();
+
+        var toolUse = response.Content
+            .Select(b => b.Value)
+            .OfType<ToolUseBlock>()
+            .FirstOrDefault(b => b.Name == EvaluateToolName)
+            ?? throw new InvalidOperationException("Anthropic yanıtında beklenen submit_evaluation tool_use bloğu bulunamadı.");
+
+        var usage = BuildUsage(response, stopwatch);
+        return ParseEvaluateResult(toolUse.Input, usage);
+    }
 
     public Task<GenerateQuestionResult> GenerateQuestionAsync(GenerateQuestionRequest request, CancellationToken ct = default)
         => throw new NotImplementedException("Soru üretimi ileriki bir sprintte eklenecek.");
+
+    private AiUsage BuildUsage(Message response, Stopwatch stopwatch)
+    {
+        var inputTokens = (int)response.Usage.InputTokens;
+        var outputTokens = (int)response.Usage.OutputTokens;
+        return new AiUsage(
+            Name, _options.Model, inputTokens, outputTokens,
+            AnthropicPricing.EstimateCostUsd(_options.Model, inputTokens, outputTokens),
+            (int)stopwatch.ElapsedMilliseconds);
+    }
 
     private static Tool BuildAnalysisTool()
     {
@@ -141,8 +201,7 @@ public class AnthropicLLMProvider : ILLMProvider
         var grounding = request.Grounding.Count == 0
             ? "(Bu soru için RAG'de hiçbir referans bulunamadı. Kazanım/beceri alanlarını uydurma; " +
               "learning_outcome_code alanını döndürme ve manual_review_required=true işaretle.)"
-            : string.Join("\n\n", request.Grounding.Select((g, i) =>
-                $"[KAYNAK {i + 1}] (doküman {g.ReferenceDocumentId}, sayfa {g.Page?.ToString() ?? "?"})\n{g.ChunkText}"));
+            : BuildGroundingBlock(request.Grounding);
 
         return $"""
             Sen Türkiye Yüzyılı Maarif Modeli'ne göre matematik sorularını analiz eden bir uzmansın.
@@ -161,7 +220,6 @@ public class AnthropicLLMProvider : ILLMProvider
             RUBRİK KRİTERLERİ (bkz. §E):
             {criteriaList}
 
-            RAG BAĞLAMI:
             {grounding}
             """;
     }
@@ -220,6 +278,197 @@ public class AnthropicLLMProvider : ILLMProvider
             CriterionEvaluations: evaluations,
             ManualReviewRequired: GetBool("manual_review_required"),
             ManualReviewReason: GetString("manual_review_reason"),
+            Usage: usage);
+    }
+
+    private static Tool BuildTransformationTool()
+    {
+        var properties = new Dictionary<string, JsonElement>
+        {
+            ["new_question"] = Schema("string", "Dönüştürülmüş soru metni."),
+            ["new_options"] = JsonSerializer.SerializeToElement(new
+            {
+                type = "array",
+                description = "3-6 şık.",
+                items = new { type = "string" },
+                minItems = 3,
+                maxItems = 6
+            }),
+            ["correct_answer"] = Schema("string", "Doğru şıkkın metni (new_options içindeki değerlerden biri)."),
+            ["solution"] = Schema("string", "Adım adım çözüm."),
+            ["distractors"] = JsonSerializer.SerializeToElement(new
+            {
+                type = "array",
+                description = "Doğru şık HARİÇ her şık için bir çeldirici kaydı (bkz. §15).",
+                items = new
+                {
+                    type = "object",
+                    properties = new
+                    {
+                        option_label = new { type = "string", description = "Örn. B, C, D." },
+                        misconception_code = new { type = "string", description = "Bu çeldiricinin işaret ettiği öğrenci hata tipi; emin değilsen döndürme." },
+                        explanation = new { type = "string" }
+                    },
+                    required = new[] { "option_label" }
+                }
+            })
+        };
+
+        return new Tool
+        {
+            Name = TransformToolName,
+            Description = "Dönüştürülmüş sorunun yapılandırılmış sonucunu bildir.",
+            InputSchema = new()
+            {
+                Properties = properties,
+                Required = ["new_question", "new_options", "correct_answer", "solution", "distractors"]
+            }
+        };
+    }
+
+    private static string BuildTransformSystemPrompt(TransformQuestionRequest request)
+    {
+        var modeInstruction = request.TransformationMode switch
+        {
+            nameof(TransformDecision.Conservative) =>
+                "CONSERVATIVE mod: yalnızca dil/ifade düzeltmeleri yap. Sayıları, bağlamı ve yapıyı DEĞİŞTİRME.",
+            nameof(TransformDecision.Transform) =>
+                "TRANSFORM mod: bağlamı ve sayıları yeniden kurgula, ama aynı kazanım/matematiksel özü koru.",
+            nameof(TransformDecision.Redesign) =>
+                "REDESIGN mod: tamamen yeni bir senaryo yaz; yalnızca aynı matematiksel öz ve kazanım korunmalı.",
+            _ => "Sorunun kazanım uyumunu artıracak şekilde dönüştür."
+        };
+
+        return $"""
+            Sen Türkiye Yüzyılı Maarif Modeli'ne göre matematik sorularını dönüştüren bir uzmansın.
+
+            MOD: {modeInstruction}
+
+            KURALLAR:
+            1. Matematiksel öz ({request.Analysis.MathematicalCore}) ve kazanım
+               ({request.Analysis.LearningOutcomeCode ?? "belirtilmemiş"}) korunmalı.
+            2. Yalnızca aşağıdaki [KAYNAK n] bloklarına dayanarak bağlam/kazanım iddiası üret.
+            3. Her yanlış şık için bir çeldirici kaydı ver; mümkünse ilişkili bir öğrenci hata
+               tipini (misconception_code) belirt, emin değilsen boş bırak — uydurma.
+            4. Cevabını YALNIZCA submit_transformation aracını çağırarak ver.
+
+            {BuildGroundingBlock(request.Grounding)}
+            """;
+    }
+
+    private static Tool BuildEvaluationTool()
+    {
+        var properties = new Dictionary<string, JsonElement>
+        {
+            ["quality_score"] = Schema("integer", "0-100 arası nihai kalite puanı."),
+            ["passed"] = Schema("boolean", "critical_failures doluysa MUTLAKA false."),
+            ["critical_failures"] = JsonSerializer.SerializeToElement(new
+            {
+                type = "array",
+                description = "Yayına engel ciddi hatalar (matematiksel yanlışlık, desteklenmeyen iddia, vb).",
+                items = new { type = "string" }
+            }),
+            ["quality_flags"] = JsonSerializer.SerializeToElement(new
+            {
+                type = "array",
+                description = "Engel olmayan ama editöre bildirilmesi gereken küçük gözlemler.",
+                items = new { type = "string" }
+            })
+        };
+
+        return new Tool
+        {
+            Name = EvaluateToolName,
+            Description = "Dönüştürülmüş sorunun kalite değerlendirmesini bildir.",
+            InputSchema = new()
+            {
+                Properties = properties,
+                Required = ["quality_score", "passed", "critical_failures", "quality_flags"]
+            }
+        };
+    }
+
+    private static string BuildEvaluateSystemPrompt(EvaluateQuestionRequest request) => $"""
+        Sen dönüştürülmüş matematik sorularını denetleyen bağımsız bir kalite hakemisin (§8).
+        Soruyu orijinaliyle KIYASLAMADAN, kendi başına değerlendir.
+
+        KURALLAR:
+        1. Matematiksel doğruluk: çözüm ve doğru cevap tutarlı mı?
+        2. Çeldirici kalitesi: yanlış şıklar makul mü, bariz mi?
+        3. Kaynak sadakati: aşağıdaki [KAYNAK n] bloklarıyla desteklenmeyen bir kazanım/olgu
+           iddiası varsa bunu critical_failures'a ekle.
+        4. Açıklık: soru ve çözüm anlaşılır mı?
+        5. critical_failures doluysa passed MUTLAKA false olmalı — skor ne olursa olsun.
+        6. Cevabını YALNIZCA submit_evaluation aracını çağırarak ver.
+
+        {BuildGroundingBlock(request.Grounding)}
+        """;
+
+    private static string BuildEvaluateUserContent(EvaluateQuestionRequest request)
+    {
+        var options = string.Join("\n", request.Options.Select((o, i) => $"{(char)('A' + i)}) {o}"));
+
+        return $"""
+            SORU:
+            {request.TransformedQuestion}
+
+            ŞIKLAR:
+            {options}
+
+            DOĞRU CEVAP: {request.CorrectAnswer}
+
+            ÇÖZÜM:
+            {request.Solution}
+            """;
+    }
+
+    private static string BuildGroundingBlock(IReadOnlyList<GroundingReference> grounding) =>
+        grounding.Count == 0
+            ? "(RAG'de hiçbir referans bulunamadı. Kaynaksız kazanım/olgu iddiası üretme.)"
+            : "RAG BAĞLAMI:\n" + string.Join("\n\n", grounding.Select((g, i) =>
+                $"[KAYNAK {i + 1}] (doküman {g.ReferenceDocumentId}, sayfa {g.Page?.ToString() ?? "?"})\n{g.ChunkText}"));
+
+    private static TransformQuestionResult ParseTransformResult(IReadOnlyDictionary<string, JsonElement> input, AiUsage usage)
+    {
+        var newOptions = input.TryGetValue("new_options", out var optionsEl) && optionsEl.ValueKind == JsonValueKind.Array
+            ? optionsEl.EnumerateArray().Select(o => o.GetString() ?? "").ToList()
+            : new List<string>();
+
+        var distractors = new List<DistractorDto>();
+        if (input.TryGetValue("distractors", out var distractorsEl) && distractorsEl.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in distractorsEl.EnumerateArray())
+            {
+                var optionLabel = item.TryGetProperty("option_label", out var ol) ? ol.GetString() ?? "" : "";
+                var misconceptionCode = item.TryGetProperty("misconception_code", out var mc) && mc.ValueKind == JsonValueKind.String
+                    ? mc.GetString() : null;
+                var explanation = item.TryGetProperty("explanation", out var ex) && ex.ValueKind == JsonValueKind.String
+                    ? ex.GetString() : null;
+                distractors.Add(new DistractorDto(optionLabel, misconceptionCode, explanation));
+            }
+        }
+
+        return new TransformQuestionResult(
+            NewQuestion: input.TryGetValue("new_question", out var nq) ? nq.GetString() ?? "" : "",
+            NewOptions: newOptions,
+            CorrectAnswer: input.TryGetValue("correct_answer", out var ca) ? ca.GetString() ?? "" : "",
+            Solution: input.TryGetValue("solution", out var sol) ? sol.GetString() ?? "" : "",
+            Distractors: distractors,
+            Usage: usage);
+    }
+
+    private static EvaluateQuestionResult ParseEvaluateResult(IReadOnlyDictionary<string, JsonElement> input, AiUsage usage)
+    {
+        static List<string> GetStringArray(IReadOnlyDictionary<string, JsonElement> input, string key) =>
+            input.TryGetValue(key, out var v) && v.ValueKind == JsonValueKind.Array
+                ? v.EnumerateArray().Select(e => e.GetString() ?? "").ToList()
+                : [];
+
+        return new EvaluateQuestionResult(
+            QualityScore: input.TryGetValue("quality_score", out var qs) ? qs.GetInt32() : 0,
+            Passed: input.TryGetValue("passed", out var p) && p.ValueKind is JsonValueKind.True or JsonValueKind.False && p.GetBoolean(),
+            CriticalFailures: GetStringArray(input, "critical_failures"),
+            QualityFlags: GetStringArray(input, "quality_flags"),
             Usage: usage);
     }
 }

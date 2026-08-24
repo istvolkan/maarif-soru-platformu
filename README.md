@@ -39,7 +39,14 @@ config'inden otomatik seed edilir, sonraki kullanıcılar `POST /api/users` (Adm
 ile oluşturulur. `POST /api/auth/login` JWT döner; Books/ReferenceDocuments/Questions
 controller'larında GET uçları herhangi bir role, mutasyon uçları (`Create`, `Extract`,
 `Ingest`, `Analyze`) `Admin,Editor` rolüne kısıtlıdır.
-Transformation/Quality Judge sonraki bir sprintte eklenecek.
+Sprint 8 (§5+§6+§8 Transformation + Quality Judge): `TransformationLevel`→`TransformationMode`
+eşlemesi (`Application/Rubric/TransformationModeMapper`, NoChange/LightEdit'te LLM hiç
+çağrılmadan doğrudan `AiApproved`), `ILLMProvider.TransformQuestionAsync`/
+`EvaluateQuestionAsync` (gerçek Anthropic tool-use + anahtar gerektirmeyen mock), `Transformed`
+`QuestionVersion`/`QuestionDna`/`Distractor` kayıtları, Judge'ın `Transformed` DNA'yı yerinde
+güncellemesi (Vision'ın `Analyzed`'ı güncellemesiyle aynı desen, ayrı versiyon üretmez) —
+`POST /api/questions/{id}/transform` (`Admin,Editor`), `GET /api/questions/{id}` yanıtı
+dönüşüm/çeldirici/kalite alanlarıyla genişletildi.
 
 ### PDF kütüphanesi seçimi hakkında not
 
@@ -135,3 +142,10 @@ dotnet ef migrations add <İsim> \
   user-secrets/key vault kullanılmalıdır.
 - Bu sprintte refresh token YOK — bilinçli MVP sınırı. JWT `Auth:Jwt:ExpiryMinutes` sonunda
   süresi dolar, istemci tekrar `POST /api/auth/login` yapmalıdır.
+- Transform/Judge mock'u (`Ai:Provider=Local`) gerçek dönüşüm/yargı YAPMAZ: soru
+  `[MOCK-{mode}]` önekiyle olduğu gibi döner, 4 sabit şık + saplama çeldiriciler üretilir,
+  kalite puanı yalnızca yapısal sinyallerden (şık sayısı/grounding/çözüm varlığı) türetilir.
+  Gerçek değerlendirme için `Ai:Provider=Anthropic` gerekir (bkz. Analysis AI notu).
+- `TransformationLevel.NoChange`/`LightEdit` hiçbir zaman LLM'e gitmez — soru doğrudan
+  `Analyzed → AiApproved` geçer, `Transformed` versiyon/DNA/AiRun kaydı hiç oluşturulmaz
+  (boş bir "geçti" versiyonu, hiç LLM çağrısı olmamasına rağmen geçmişi yanıltır).

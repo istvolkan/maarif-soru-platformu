@@ -66,10 +66,44 @@ public class LocalHeuristicLLMProvider : ILLMProvider
     }
 
     public Task<TransformQuestionResult> TransformQuestionAsync(TransformQuestionRequest request, CancellationToken ct = default)
-        => throw new NotImplementedException("Transformation Sprint 5'te eklenecek.");
+    {
+        var options = new List<string> { "A seçeneği", "B seçeneği", "C seçeneği", "D seçeneği" };
+        var distractors = new List<DistractorDto>
+        {
+            new("B", null, "[MOCK] Gerçek çeldirici analizi yapılmadı."),
+            new("C", null, "[MOCK] Gerçek çeldirici analizi yapılmadı."),
+            new("D", null, "[MOCK] Gerçek çeldirici analizi yapılmadı.")
+        };
+
+        var result = new TransformQuestionResult(
+            NewQuestion: $"[MOCK-{request.TransformationMode}] {request.OriginalQuestion}",
+            NewOptions: options,
+            CorrectAnswer: options[0],
+            Solution: "[MOCK] Gerçek çözüm üretilmedi.",
+            Distractors: distractors,
+            Usage: new AiUsage("local-heuristic", "mock-v1", EstimateTokens(request), 120, 0m, 5));
+
+        return Task.FromResult(result);
+    }
 
     public Task<EvaluateQuestionResult> EvaluateQuestionAsync(EvaluateQuestionRequest request, CancellationToken ct = default)
-        => throw new NotImplementedException("Quality Judge Sprint 5'te eklenecek.");
+    {
+        var score = 60;
+        if (request.Options.Count is >= 3 and <= 6) score += 15;
+        if (request.Grounding.Count > 0) score += 10;
+        if (!string.IsNullOrWhiteSpace(request.Solution)) score += 10;
+        if (!string.IsNullOrWhiteSpace(request.CorrectAnswer)) score += 5;
+        score = Math.Clamp(score, 0, 100);
+
+        var result = new EvaluateQuestionResult(
+            QualityScore: score,
+            Passed: score >= 55,
+            CriticalFailures: [],
+            QualityFlags: ["[MOCK] gerçek yargı yapılmadı, yapısal sinyallere dayanır."],
+            Usage: new AiUsage("local-heuristic", "mock-v1", EstimateTokens(request), 80, 0m, 5));
+
+        return Task.FromResult(result);
+    }
 
     public Task<GenerateQuestionResult> GenerateQuestionAsync(GenerateQuestionRequest request, CancellationToken ct = default)
         => throw new NotImplementedException("Soru üretimi ileriki bir sprintte eklenecek.");
@@ -79,4 +113,9 @@ public class LocalHeuristicLLMProvider : ILLMProvider
 
     private static int EstimateTokens(AnalyzeQuestionRequest request) =>
         (request.OriginalQuestion.Length + request.OriginalOptions.Sum(o => o.Length)) / 4;
+
+    private static int EstimateTokens(TransformQuestionRequest request) => request.OriginalQuestion.Length / 4;
+
+    private static int EstimateTokens(EvaluateQuestionRequest request) =>
+        (request.TransformedQuestion.Length + request.Options.Sum(o => o.Length)) / 4;
 }

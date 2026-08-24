@@ -11,8 +11,10 @@ public sealed record RubricResult(
     IReadOnlyList<string> Issues);
 
 /// <summary>§A tasarım kararı: puanlama mantığı kodda, deterministik ve denetlenebilir tutulur.
-/// LLM sadece kriter başına ham bir değerlendirme verir (§8 AI Quality Judge de aynı prensiple
-/// bu motoru kullanacaktır — Sprint 5).</summary>
+/// LLM sadece kriter başına ham bir değerlendirme verir. §8 AI Quality Judge BU MOTORU
+/// KULLANMAZ — EvaluateQuestionResult, LLM'in doğrudan döndürdüğü nihai bir skordur (kriter
+/// bazlı ayrıştırma yok); orijinal tasarım dokümanının §8 bölümü repoda mevcut değil, bu
+/// nedenle spesifikasyonu olmayan bir kriter/ağırlık tablosu icat edilmedi (bkz. Sprint 8).</summary>
 public static class RubricEngine
 {
     private const int LowScoreIssueThreshold = 60;
