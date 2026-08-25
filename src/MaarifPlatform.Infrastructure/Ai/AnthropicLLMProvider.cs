@@ -8,13 +8,13 @@ using Microsoft.Extensions.Options;
 
 namespace MaarifPlatform.Infrastructure.Ai;
 
-/// <summary>§11/§H gerçek Analysis/Transformation/Judge sağlayıcısı — Anthropic Messages API
-/// üzerinden, tool-calling ile zorunlu yapılandırılmış çıktı (§I). Analyze'de LLM yalnızca
-/// kriter başına HAM puan döner; ağırlıklandırma ve nihai karar RubricEngine'de (Application/Rubric)
-/// deterministik hesaplanır. Transform/Judge için LLM nihai çıktıyı doğrudan üretir (bkz.
-/// EvaluateQuestionResult — kriter bazlı ayrıştırma yok, RubricEngine'i kullanmaz).
-/// GenerateQuestionAsync ileriki bir sprintte eklenecek (bkz. LocalHeuristicLLMProvider'daki
-/// simetrik kapsam).</summary>
+/// <summary>§11/§H gerçek Analysis/Transformation/Judge/Generation sağlayıcısı — Anthropic
+/// Messages API üzerinden, tool-calling ile zorunlu yapılandırılmış çıktı (§I). Analyze'de
+/// LLM yalnızca kriter başına HAM puan döner; ağırlıklandırma ve nihai karar RubricEngine'de
+/// (Application/Rubric) deterministik hesaplanır. Transform/Judge/Generate için LLM nihai
+/// çıktıyı doğrudan üretir (bkz. EvaluateQuestionResult — kriter bazlı ayrıştırma yok,
+/// RubricEngine'i kullanmaz). Dört ILLMProvider metodu da (Analyze/Transform/Evaluate/Generate)
+/// implemente edilmiştir — bkz. LocalHeuristicLLMProvider'daki simetrik mock kapsam.</summary>
 public class AnthropicLLMProvider : ILLMProvider
 {
     private const string ToolName = "submit_analysis";
