@@ -28,12 +28,15 @@ public class VisionAnalysisService(
     IPdfPageRenderer pageRenderer,
     IVisionRouter visionRouter,
     IVisionProviderFactory providerFactory,
-    IOptions<VisionRoutingOptions> routingOptions)
+    IOptionsMonitor<VisionRoutingOptions> routingOptions)
 {
-    private readonly VisionRoutingOptions _routing = routingOptions.Value;
-
     public async Task<VisionAnalysisResult> AnalyzeAsync(Question question, QuestionDna originalDna, CancellationToken ct = default)
     {
+        // Sprint 11: her çağrıda taze okunur (IOptionsMonitor.CurrentValue) — Admin Ayarlar
+        // ekranından değiştirilen Vision:Provider/SecondaryProvider yeniden başlatma
+        // gerektirmeden etkili olur.
+        var routing = routingOptions.CurrentValue;
+
         var decision = await visionRouter.DecideAsync(
             originalDna.OriginalQuestion ?? string.Empty, originalDna.OriginalVisualReference, ct);
 
@@ -70,7 +73,7 @@ public class VisionAnalysisService(
             });
         }
 
-        var primaryProvider = providerFactory.Get(_routing.PrimaryProvider);
+        var primaryProvider = providerFactory.Get(routing.Provider);
         var primaryObservation = await primaryProvider.AnalyzeQuestionImageAsync(
             rendered.PngBytes, originalDna.OriginalQuestion ?? string.Empty, ct);
         var validationWarnings = (await primaryProvider.ValidateVisualStructureAsync(primaryObservation, ct)).ToList();
@@ -80,10 +83,10 @@ public class VisionAnalysisService(
         // §9/§10: yalnızca birincil güven eşiğin altındaysa VE bir ikincil sağlayıcı
         // yapılandırılmışsa ikinci bir Vision çağrısı yapılır — her soru için otomatik
         // çift-provider çalıştırmak maliyeti gereksiz büyütür.
-        if (!string.IsNullOrWhiteSpace(_routing.SecondaryProvider)
-            && primaryObservation.Confidence < _routing.ConsensusConfidenceThreshold)
+        if (!string.IsNullOrWhiteSpace(routing.SecondaryProvider)
+            && primaryObservation.Confidence < routing.ConsensusConfidenceThreshold)
         {
-            var secondaryProvider = providerFactory.Get(_routing.SecondaryProvider);
+            var secondaryProvider = providerFactory.Get(routing.SecondaryProvider);
             var secondaryObservation = await secondaryProvider.AnalyzeQuestionImageAsync(
                 rendered.PngBytes, originalDna.OriginalQuestion ?? string.Empty, ct);
 

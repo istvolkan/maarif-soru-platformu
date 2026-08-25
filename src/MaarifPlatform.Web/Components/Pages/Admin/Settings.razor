@@ -1,0 +1,226 @@
+@page "/admin/settings"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = "Admin")]
+@using System.Security.Claims
+@using MaarifPlatform.Infrastructure.Configuration
+@inject IConfiguration Configuration
+@inject IServiceScopeFactory ScopeFactory
+@inject AuthenticationStateProvider AuthState
+
+<PageTitle>Ayarlar</PageTitle>
+<h1>Ayarlar — Sağlayıcılar ve API Anahtarları</h1>
+<p>
+    Buradaki değişiklikler <code>appsettings.json</code>'daki varsayılanların ÜZERİNE yazılır ve
+    uygulama yeniden başlatılmadan hemen etkili olur. API anahtarı alanları boş bırakılırsa
+    mevcut kayıtlı değer korunur — yalnızca değiştirmek istediğiniz anahtarı doldurun.
+</p>
+
+@if (_message is not null)
+{
+    <p class="ok">@_message</p>
+}
+@if (_error is not null)
+{
+    <p class="error">@_error</p>
+}
+
+<EditForm Model="_form" OnValidSubmit="SaveAsync">
+    <fieldset>
+        <legend>Analysis / Transform / Generate (Ai)</legend>
+        <div class="field">
+            <label>Birincil Sağlayıcı</label>
+            <InputSelect @bind-Value="_form.AiProvider">
+                <option value="Local">Local (mock, anahtar gerektirmez)</option>
+                <option value="Anthropic">Anthropic</option>
+            </InputSelect>
+        </div>
+        <div class="field"><label>Anthropic API Key @KeyStatus(_hasAnthropicKey)</label><InputText @bind-Value="_form.AnthropicApiKey" type="password" placeholder="değiştirmek için doldurun" /></div>
+        <div class="field"><label>Anthropic Model</label><InputText @bind-Value="_form.AnthropicModel" /></div>
+        <div class="field"><label>Anthropic Max Tokens</label><InputNumber @bind-Value="_form.AnthropicMaxTokens" /></div>
+    </fieldset>
+
+    <fieldset>
+        <legend>Judge Çapraz-Sağlayıcı Consensus</legend>
+        <div class="field">
+            <label>İkincil Sağlayıcı</label>
+            <InputSelect @bind-Value="_form.JudgeSecondaryProvider">
+                <option value="">(boş — consensus devre dışı)</option>
+                <option value="OpenAI">OpenAI</option>
+                <option value="Anthropic">Anthropic</option>
+            </InputSelect>
+        </div>
+        <div class="field"><label>OpenAI API Key @KeyStatus(_hasOpenAiKey)</label><InputText @bind-Value="_form.OpenAiApiKey" type="password" placeholder="değiştirmek için doldurun" /></div>
+        <div class="field"><label>OpenAI Model</label><InputText @bind-Value="_form.OpenAiModel" /></div>
+        <div class="field"><label>OpenAI Max Tokens</label><InputNumber @bind-Value="_form.OpenAiMaxTokens" /></div>
+        <div class="field"><label>Consensus Güven Eşiği (0-1)</label><InputNumber @bind-Value="_form.JudgeConsensusConfidenceThreshold" step="0.05" /></div>
+        <div class="field"><label>Consensus Puan Farkı Eşiği</label><InputNumber @bind-Value="_form.JudgeConsensusScoreDeltaThreshold" /></div>
+    </fieldset>
+
+    <fieldset>
+        <legend>Vision</legend>
+        <div class="field">
+            <label>Birincil Sağlayıcı</label>
+            <InputSelect @bind-Value="_form.VisionProvider">
+                <option value="Local">Local (mock, anahtar gerektirmez)</option>
+                <option value="Gemini">Gemini</option>
+                <option value="Anthropic">Anthropic</option>
+            </InputSelect>
+        </div>
+        <div class="field">
+            <label>İkincil Sağlayıcı</label>
+            <InputSelect @bind-Value="_form.VisionSecondaryProvider">
+                <option value="">(boş — consensus devre dışı)</option>
+                <option value="Gemini">Gemini</option>
+                <option value="Anthropic">Anthropic</option>
+            </InputSelect>
+        </div>
+        <div class="field"><label>Gemini API Key @KeyStatus(_hasGeminiKey)</label><InputText @bind-Value="_form.GeminiApiKey" type="password" placeholder="değiştirmek için doldurun" /></div>
+        <div class="field"><label>Gemini Model</label><InputText @bind-Value="_form.GeminiModel" /></div>
+        <div class="field"><label>Vision Anthropic API Key @KeyStatus(_hasVisionAnthropicKey)</label><InputText @bind-Value="_form.VisionAnthropicApiKey" type="password" placeholder="değiştirmek için doldurun" /></div>
+        <div class="field"><label>Vision Anthropic Model</label><InputText @bind-Value="_form.VisionAnthropicModel" /></div>
+        <div class="field"><label>Consensus Güven Eşiği (0-1)</label><InputNumber @bind-Value="_form.VisionConsensusConfidenceThreshold" step="0.05" /></div>
+    </fieldset>
+
+    <fieldset>
+        <legend>Embeddings (RAG)</legend>
+        <div class="field">
+            <label>Sağlayıcı</label>
+            <InputSelect @bind-Value="_form.EmbeddingsProvider">
+                <option value="Local">Local (anlamsal değil, yalnızca boru testi)</option>
+                <option value="OpenAI">OpenAI</option>
+            </InputSelect>
+        </div>
+        <div class="field"><label>OpenAI API Key @KeyStatus(_hasEmbeddingsKey)</label><InputText @bind-Value="_form.EmbeddingsApiKey" type="password" placeholder="değiştirmek için doldurun" /></div>
+        <div class="field"><label>OpenAI Model</label><InputText @bind-Value="_form.EmbeddingsModel" /></div>
+        <p class="note">Not: Embeddings burada canlı yeniden yükleme kapsamı dışındadır (bkz. README) — değişiklik için uygulama yeniden başlatılmalıdır.</p>
+    </fieldset>
+
+    <button type="submit">Kaydet</button>
+</EditForm>
+
+<style>
+    fieldset { margin-bottom: 1.5rem; border: 1px solid #ddd; border-radius: 4px; padding: 1rem; }
+    legend { font-weight: 700; padding: 0 0.5rem; }
+    .field { margin-bottom: 0.75rem; display: flex; flex-direction: column; gap: 0.25rem; max-width: 400px; }
+    .error { color: #b00020; }
+    .ok { color: #1b5e20; }
+    .note { font-size: 0.85rem; color: #666; }
+</style>
+
+@code {
+    private SettingsForm _form = new();
+    private bool _hasAnthropicKey, _hasGeminiKey, _hasVisionAnthropicKey, _hasOpenAiKey, _hasEmbeddingsKey;
+    private string? _message;
+    private string? _error;
+
+    protected override void OnInitialized()
+    {
+        _form.AiProvider = Configuration["Ai:Provider"] ?? "Local";
+        _form.AnthropicModel = Configuration["Ai:Anthropic:Model"] ?? "claude-opus-4-8";
+        _form.AnthropicMaxTokens = Configuration.GetValue<int?>("Ai:Anthropic:MaxTokens") ?? 4096;
+        _hasAnthropicKey = !string.IsNullOrWhiteSpace(Configuration["Ai:Anthropic:ApiKey"]);
+
+        _form.JudgeSecondaryProvider = Configuration["Judge:SecondaryProvider"] ?? "";
+        _form.OpenAiModel = Configuration["Judge:OpenAI:Model"] ?? "gpt-4o";
+        _form.OpenAiMaxTokens = Configuration.GetValue<int?>("Judge:OpenAI:MaxTokens") ?? 2048;
+        _form.JudgeConsensusConfidenceThreshold = Configuration.GetValue<decimal?>("Judge:ConsensusConfidenceThreshold") ?? 0.7m;
+        _form.JudgeConsensusScoreDeltaThreshold = Configuration.GetValue<int?>("Judge:ConsensusScoreDeltaThreshold") ?? 20;
+        _hasOpenAiKey = !string.IsNullOrWhiteSpace(Configuration["Judge:OpenAI:ApiKey"]);
+
+        _form.VisionProvider = Configuration["Vision:Provider"] ?? "Local";
+        _form.VisionSecondaryProvider = Configuration["Vision:SecondaryProvider"] ?? "";
+        _form.GeminiModel = Configuration["Vision:Gemini:Model"] ?? "gemini-2.0-flash";
+        _form.VisionAnthropicModel = Configuration["Vision:Anthropic:Model"] ?? "claude-opus-4-8";
+        _form.VisionConsensusConfidenceThreshold = Configuration.GetValue<decimal?>("Vision:ConsensusConfidenceThreshold") ?? 0.95m;
+        _hasGeminiKey = !string.IsNullOrWhiteSpace(Configuration["Vision:Gemini:ApiKey"]);
+        _hasVisionAnthropicKey = !string.IsNullOrWhiteSpace(Configuration["Vision:Anthropic:ApiKey"]);
+
+        _form.EmbeddingsProvider = Configuration["Embeddings:Provider"] ?? "Local";
+        _form.EmbeddingsModel = Configuration["Embeddings:OpenAI:Model"] ?? "text-embedding-3-small";
+        _hasEmbeddingsKey = !string.IsNullOrWhiteSpace(Configuration["Embeddings:OpenAI:ApiKey"]);
+    }
+
+    private static string KeyStatus(bool hasKey) => hasKey ? "(ayarlı)" : "(ayarlı değil)";
+
+    private async Task SaveAsync()
+    {
+        _error = null;
+        _message = null;
+
+        var authState = await AuthState.GetAuthenticationStateAsync();
+        Guid? userId = Guid.TryParse(authState.User.FindFirst(ClaimTypes.NameIdentifier)?.Value, out var id) ? id : null;
+
+        await using var scope = ScopeFactory.CreateAsyncScope();
+        var settings = scope.ServiceProvider.GetRequiredService<SystemSettingsService>();
+
+        async Task SetAsync(string key, string? value)
+        {
+            if (value is not null)
+            {
+                await settings.SetAsync(key, value, userId);
+            }
+        }
+
+        try
+        {
+            await SetAsync("Ai:Provider", _form.AiProvider);
+            await SetAsync("Ai:Anthropic:Model", _form.AnthropicModel);
+            await SetAsync("Ai:Anthropic:MaxTokens", _form.AnthropicMaxTokens?.ToString());
+            if (!string.IsNullOrWhiteSpace(_form.AnthropicApiKey)) await SetAsync("Ai:Anthropic:ApiKey", _form.AnthropicApiKey);
+
+            await SetAsync("Judge:SecondaryProvider", _form.JudgeSecondaryProvider);
+            await SetAsync("Judge:OpenAI:Model", _form.OpenAiModel);
+            await SetAsync("Judge:OpenAI:MaxTokens", _form.OpenAiMaxTokens?.ToString());
+            await SetAsync("Judge:ConsensusConfidenceThreshold", _form.JudgeConsensusConfidenceThreshold?.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            await SetAsync("Judge:ConsensusScoreDeltaThreshold", _form.JudgeConsensusScoreDeltaThreshold?.ToString());
+            if (!string.IsNullOrWhiteSpace(_form.OpenAiApiKey)) await SetAsync("Judge:OpenAI:ApiKey", _form.OpenAiApiKey);
+
+            await SetAsync("Vision:Provider", _form.VisionProvider);
+            await SetAsync("Vision:SecondaryProvider", _form.VisionSecondaryProvider);
+            await SetAsync("Vision:Gemini:Model", _form.GeminiModel);
+            await SetAsync("Vision:Anthropic:Model", _form.VisionAnthropicModel);
+            await SetAsync("Vision:ConsensusConfidenceThreshold", _form.VisionConsensusConfidenceThreshold?.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            if (!string.IsNullOrWhiteSpace(_form.GeminiApiKey)) await SetAsync("Vision:Gemini:ApiKey", _form.GeminiApiKey);
+            if (!string.IsNullOrWhiteSpace(_form.VisionAnthropicApiKey)) await SetAsync("Vision:Anthropic:ApiKey", _form.VisionAnthropicApiKey);
+
+            await SetAsync("Embeddings:Provider", _form.EmbeddingsProvider);
+            await SetAsync("Embeddings:OpenAI:Model", _form.EmbeddingsModel);
+            if (!string.IsNullOrWhiteSpace(_form.EmbeddingsApiKey)) await SetAsync("Embeddings:OpenAI:ApiKey", _form.EmbeddingsApiKey);
+
+            _message = "Ayarlar kaydedildi ve etkinleştirildi.";
+            _form.AnthropicApiKey = _form.OpenAiApiKey = _form.GeminiApiKey = _form.VisionAnthropicApiKey = _form.EmbeddingsApiKey = "";
+            OnInitialized();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private sealed class SettingsForm
+    {
+        public string AiProvider { get; set; } = "Local";
+        public string? AnthropicApiKey { get; set; }
+        public string? AnthropicModel { get; set; }
+        public int? AnthropicMaxTokens { get; set; }
+
+        public string JudgeSecondaryProvider { get; set; } = "";
+        public string? OpenAiApiKey { get; set; }
+        public string? OpenAiModel { get; set; }
+        public int? OpenAiMaxTokens { get; set; }
+        public decimal? JudgeConsensusConfidenceThreshold { get; set; }
+        public int? JudgeConsensusScoreDeltaThreshold { get; set; }
+
+        public string VisionProvider { get; set; } = "Local";
+        public string VisionSecondaryProvider { get; set; } = "";
+        public string? GeminiApiKey { get; set; }
+        public string? GeminiModel { get; set; }
+        public string? VisionAnthropicApiKey { get; set; }
+        public string? VisionAnthropicModel { get; set; }
+        public decimal? VisionConsensusConfidenceThreshold { get; set; }
+
+        public string EmbeddingsProvider { get; set; } = "Local";
+        public string? EmbeddingsApiKey { get; set; }
+        public string? EmbeddingsModel { get; set; }
+    }
+}

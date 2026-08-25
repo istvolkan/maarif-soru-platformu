@@ -16,23 +16,36 @@ public class AnthropicVisionProvider : IVisionProvider
 {
     private const string ToolName = "submit_visual_observation";
 
-    private readonly AnthropicVisionOptions _options;
-    private readonly AnthropicClient _client;
+    private readonly IOptionsMonitor<AnthropicVisionOptions> _optionsMonitor;
+    private AnthropicClient? _client;
+    private string? _clientKey;
 
-    public AnthropicVisionProvider(IOptions<AnthropicVisionOptions> options)
+    public AnthropicVisionProvider(IOptionsMonitor<AnthropicVisionOptions> optionsMonitor)
     {
-        _options = options.Value;
-        if (string.IsNullOrWhiteSpace(_options.ApiKey))
+        _optionsMonitor = optionsMonitor;
+    }
+
+    public string Name => "anthropic";
+
+    /// <summary>Sprint 11: bkz. AnthropicLLMProvider.Current() — aynı desen.</summary>
+    private (AnthropicVisionOptions Options, AnthropicClient Client) Current()
+    {
+        var options = _optionsMonitor.CurrentValue;
+        if (string.IsNullOrWhiteSpace(options.ApiKey))
         {
             throw new InvalidOperationException(
                 "Vision:Anthropic:ApiKey tanımlı değil. Gerçek görsel analiz için appsettings/user-secrets " +
                 "üzerinden bir API anahtarı sağlanmalı; anahtar yoksa Vision:Provider=Local kullanın.");
         }
 
-        _client = new AnthropicClient { ApiKey = _options.ApiKey };
-    }
+        if (_client is null || _clientKey != options.ApiKey)
+        {
+            _client = new AnthropicClient { ApiKey = options.ApiKey };
+            _clientKey = options.ApiKey;
+        }
 
-    public string Name => "anthropic";
+        return (options, _client);
+    }
 
     public Task<VisualObservation> AnalyzePageAsync(byte[] pageImagePng, CancellationToken ct = default) =>
         CallAnthropicAsync(pageImagePng,
@@ -58,6 +71,7 @@ public class AnthropicVisionProvider : IVisionProvider
 
     private async Task<VisualObservation> CallAnthropicAsync(byte[] imagePng, string taskPrompt, CancellationToken ct)
     {
+        var (options, client) = Current();
         const string systemPrompt =
             "Sen bir matematik/fizik/kimya ders kitabı görselini analiz eden bir gözlemcisin. " +
             "KURAL: Emin olmadığın bir etiket-değer eşleşmesi varsa (örn. '5' değeri AB'ye mi AC'ye mi " +
@@ -66,8 +80,8 @@ public class AnthropicVisionProvider : IVisionProvider
 
         var parameters = new MessageCreateParams
         {
-            Model = _options.Model,
-            MaxTokens = _options.MaxTokens,
+            Model = options.Model,
+            MaxTokens = options.MaxTokens,
             System = systemPrompt,
             Tools = [BuildObservationTool()],
             ToolChoice = new ToolChoiceTool { Name = ToolName },
@@ -93,7 +107,7 @@ public class AnthropicVisionProvider : IVisionProvider
         };
 
         var stopwatch = Stopwatch.StartNew();
-        var response = await _client.Messages.Create(parameters, ct);
+        var response = await client.Messages.Create(parameters, ct);
         stopwatch.Stop();
 
         var toolUse = response.Content
@@ -105,8 +119,8 @@ public class AnthropicVisionProvider : IVisionProvider
         var inputTokens = (int)response.Usage.InputTokens;
         var outputTokens = (int)response.Usage.OutputTokens;
         var usage = new AiUsage(
-            Name, _options.Model, inputTokens, outputTokens,
-            AnthropicPricing.EstimateCostUsd(_options.Model, inputTokens, outputTokens),
+            Name, options.Model, inputTokens, outputTokens,
+            AnthropicPricing.EstimateCostUsd(options.Model, inputTokens, outputTokens),
             (int)stopwatch.ElapsedMilliseconds);
 
         return ParseObservation(toolUse.Input, usage);

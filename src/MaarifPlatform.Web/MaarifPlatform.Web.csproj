@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\MaarifPlatform.Infrastructure\MaarifPlatform.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Sdk.Web'in dolaylı olarak getirdiği daha düşük EFCore sürümüyle Infrastructure'ın
+         kullandığı 9.0.1 arasındaki çakışmayı çözmek için açıkça sabitlenir (Infrastructure'daki
+         Npgsql.EntityFrameworkCore.PostgreSQL ile aynı sürüm). -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="9.0.1" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="9.0.1" />
+  </ItemGroup>
+
+</Project>

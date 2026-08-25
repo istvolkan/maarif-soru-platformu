@@ -31,16 +31,18 @@ public sealed record TransformationSummary(
 /// karşılığı yok.</summary>
 public class TransformationOrchestrationService(
     MaarifDbContext db,
-    ILLMProvider llmProvider,
     ReferenceSearchService searchService,
     ILLMProviderFactory providerFactory,
-    IOptions<JudgeRoutingOptions> judgeRoutingOptions)
+    IOptionsMonitor<AiRoutingOptions> aiRouting,
+    IOptionsMonitor<JudgeRoutingOptions> judgeRoutingOptions)
 {
-    private readonly JudgeRoutingOptions _judgeRouting = judgeRoutingOptions.Value;
-
-
     public async Task<TransformationSummary> TransformAsync(Guid questionId, CancellationToken ct = default)
     {
+        // Sprint 11: her ikisi de her çağrıda taze okunur — Admin Ayarlar'dan değiştirilen
+        // Ai:Provider/Judge:SecondaryProvider yeniden başlatma gerektirmeden etkili olur.
+        var llmProvider = providerFactory.Get(aiRouting.CurrentValue.Provider);
+        var judgeRouting = judgeRoutingOptions.CurrentValue;
+
         var question = await db.Questions.FirstOrDefaultAsync(q => q.Id == questionId, ct)
             ?? throw new InvalidOperationException($"Soru bulunamadı: {questionId}");
 
@@ -175,14 +177,14 @@ public class TransformationOrchestrationService(
         // aynı) — birincilin YÜKSEK puanla YANLIŞ onay verdiği durumları bu mekanizma yakalamaz,
         // bu bilinçli bir sınır.
         var disagreementFlags = new List<string>();
-        if (!string.IsNullOrWhiteSpace(_judgeRouting.SecondaryProvider)
-            && evalResult.QualityScore / 100m < _judgeRouting.ConsensusConfidenceThreshold)
+        if (!string.IsNullOrWhiteSpace(judgeRouting.SecondaryProvider)
+            && evalResult.QualityScore / 100m < judgeRouting.ConsensusConfidenceThreshold)
         {
-            var secondaryProvider = providerFactory.Get(_judgeRouting.SecondaryProvider);
+            var secondaryProvider = providerFactory.Get(judgeRouting.SecondaryProvider);
             var secondaryEval = await secondaryProvider.EvaluateQuestionAsync(evalRequest, ct);
             db.AiRuns.Add(BuildAiRun(questionId, PipelineStage.Judge, secondaryEval.Usage, secondaryProvider.Name));
             disagreementFlags.AddRange(
-                JudgeConsensusChecker.Compare(evalResult, secondaryEval, _judgeRouting.ConsensusScoreDeltaThreshold));
+                JudgeConsensusChecker.Compare(evalResult, secondaryEval, judgeRouting.ConsensusScoreDeltaThreshold));
         }
 
         // Judge, az önce eklenen Transformed DNA satırını yerinde günceller — Vision'ın

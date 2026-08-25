@@ -1,0 +1,196 @@
+@page "/admin/reference-documents"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = "Admin")]
+@using System.Security.Cryptography
+@using MaarifPlatform.Application.Storage
+@using MaarifPlatform.Infrastructure.Persistence
+@using MaarifPlatform.Infrastructure.Rag
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.EntityFrameworkCore
+@inject IServiceScopeFactory ScopeFactory
+
+<PageTitle>Referans Dokümanları</PageTitle>
+<h1>Referans Dokümanları</h1>
+<p>
+    MEB öğretim programı/kılavuz gibi RAG kaynak dokümanları buraya yüklenir. Bir kitaptaki
+    sorular, ancak aynı Sınıf/Ders için ingest edilmiş bir referans doküman varsa RAG grounding
+    alabilir — grounding olmadan Analyze her zaman "İncelemeye Gönder" durumuna düşer.
+</p>
+
+@if (_error is not null)
+{
+    <p class="error">@_error</p>
+}
+
+<EditForm Model="_form" OnValidSubmit="UploadAsync">
+    <DataAnnotationsValidator />
+    <div class="field"><label>Başlık</label><InputText @bind-Value="_form.Title" /></div>
+    <div class="field"><label>Doküman Türü</label><InputText @bind-Value="_form.DocumentType" placeholder="örn. Curriculum, Guide" /></div>
+    <div class="field"><label>Sınıf</label><InputNumber @bind-Value="_form.Grade" /></div>
+    <div class="field"><label>Ders</label><InputText @bind-Value="_form.Subject" /></div>
+    <div class="field"><label>Yetkili Kurum</label><InputText @bind-Value="_form.Authority" placeholder="örn. MEB" /></div>
+    <div class="field"><label>PDF Dosyası</label><InputFile OnChange="OnFileSelected" accept=".pdf" /></div>
+    <button type="submit" disabled="@(_selectedFile is null || _uploading)">@(_uploading ? "Yükleniyor..." : "Yükle")</button>
+</EditForm>
+
+<hr />
+
+@if (_documents is null)
+{
+    <p>Yükleniyor...</p>
+}
+else
+{
+    <table>
+        <thead>
+            <tr><th>Başlık</th><th>Tür</th><th>Sınıf</th><th>Ders</th><th>Chunk</th><th></th></tr>
+        </thead>
+        <tbody>
+            @foreach (var d in _documents)
+            {
+                <tr>
+                    <td>@d.Title</td>
+                    <td>@d.DocumentType</td>
+                    <td>@d.Grade</td>
+                    <td>@d.Subject</td>
+                    <td>@d.ChunkCount</td>
+                    <td>
+                        @if (d.ChunkCount == 0)
+                        {
+                            <button @onclick="() => IngestAsync(d.Id)">Ingest Et</button>
+                        }
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+<style>
+    .field { margin-bottom: 0.75rem; display: flex; flex-direction: column; gap: 0.25rem; max-width: 400px; }
+    .error { color: #b00020; }
+    table { border-collapse: collapse; width: 100%; margin-top: 1rem; }
+    th, td { border: 1px solid #ddd; padding: 0.4rem 0.6rem; text-align: left; }
+</style>
+
+@code {
+    private DocumentForm _form = new();
+    private IBrowserFile? _selectedFile;
+    private bool _uploading;
+    private string? _error;
+    private List<DocumentRow>? _documents;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        await using var scope = ScopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<MaarifDbContext>();
+
+        _documents = await db.ReferenceDocuments
+            .OrderByDescending(d => d.CreatedAt)
+            .Select(d => new DocumentRow(d.Id, d.Title, d.DocumentType, d.Grade, d.Subject,
+                db.ReferenceChunks.Count(c => c.ReferenceDocumentId == d.Id)))
+            .ToListAsync();
+    }
+
+    private void OnFileSelected(InputFileChangeEventArgs e) => _selectedFile = e.File;
+
+    private async Task UploadAsync()
+    {
+        if (_selectedFile is null)
+        {
+            return;
+        }
+
+        _uploading = true;
+        _error = null;
+        try
+        {
+            await using var scope = ScopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<MaarifDbContext>();
+            var storage = scope.ServiceProvider.GetRequiredService<IBookFileStorage>();
+
+            byte[] fileBytes;
+            await using (var buffer = new MemoryStream())
+            {
+                await using var readStream = _selectedFile.OpenReadStream(maxAllowedSize: 200 * 1024 * 1024);
+                await readStream.CopyToAsync(buffer);
+                fileBytes = buffer.ToArray();
+            }
+
+            // §9: aynı dokümanın tekrar tekrar yüklenip gömülmesini önlemek için içerik hash'i —
+            // ReferenceDocumentsController.Create ile aynı deterministik kural.
+            var documentHash = Convert.ToHexString(SHA256.HashData(fileBytes));
+            var existing = await db.ReferenceDocuments.FirstOrDefaultAsync(d => d.DocumentHash == documentHash);
+            if (existing is not null)
+            {
+                _error = "Bu içerik daha önce yüklenmiş.";
+                return;
+            }
+
+            var document = new ReferenceDocument
+            {
+                Title = _form.Title,
+                DocumentType = _form.DocumentType,
+                Grade = _form.Grade,
+                Subject = _form.Subject,
+                Authority = _form.Authority,
+                DocumentHash = documentHash
+            };
+
+            await using (var stream = new MemoryStream(fileBytes))
+            {
+                document.StorageUri = await storage.SaveAsync(document.Id, _selectedFile.Name, stream);
+            }
+
+            db.ReferenceDocuments.Add(document);
+            await db.SaveChangesAsync();
+
+            _form = new();
+            _selectedFile = null;
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _uploading = false;
+        }
+    }
+
+    private async Task IngestAsync(Guid documentId)
+    {
+        _error = null;
+        await using var scope = ScopeFactory.CreateAsyncScope();
+        var ingestionService = scope.ServiceProvider.GetRequiredService<ReferenceIngestionService>();
+
+        try
+        {
+            await ingestionService.IngestAsync(documentId);
+        }
+        catch (InvalidOperationException ex)
+        {
+            _error = ex.Message;
+        }
+
+        await LoadAsync();
+    }
+
+    private sealed class DocumentForm
+    {
+        [System.ComponentModel.DataAnnotations.Required]
+        public string Title { get; set; } = string.Empty;
+        [System.ComponentModel.DataAnnotations.Required]
+        public string DocumentType { get; set; } = string.Empty;
+        public int? Grade { get; set; }
+        [System.ComponentModel.DataAnnotations.Required]
+        public string Subject { get; set; } = string.Empty;
+        [System.ComponentModel.DataAnnotations.Required]
+        public string Authority { get; set; } = string.Empty;
+    }
+
+    private sealed record DocumentRow(Guid Id, string Title, string DocumentType, int? Grade, string Subject, int ChunkCount);
+}

@@ -3,9 +3,11 @@ using MaarifPlatform.Application.Extraction;
 using MaarifPlatform.Application.Providers;
 using MaarifPlatform.Domain.Entities;
 using MaarifPlatform.Domain.Enums;
+using MaarifPlatform.Infrastructure.Ai;
 using MaarifPlatform.Infrastructure.Persistence;
 using MaarifPlatform.Infrastructure.Rag;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace MaarifPlatform.Infrastructure.Analysis;
 
@@ -21,11 +23,16 @@ public sealed record GenerationSummary(Guid QuestionId, AiUsage Usage);
 /// paylaşılan bir placeholder Book'a (SourceType=Generated) bağlanır — yeni migration gerekmez.</summary>
 public class GenerationOrchestrationService(
     MaarifDbContext db,
-    ILLMProvider llmProvider,
+    ILLMProviderFactory providerFactory,
+    IOptionsMonitor<AiRoutingOptions> aiRouting,
     ReferenceSearchService searchService)
 {
     public async Task<GenerationSummary> GenerateAsync(GenerateQuestionRequest request, CancellationToken ct = default)
     {
+        // Sprint 11: her çağrıda taze okunur — Admin Ayarlar'dan değiştirilen Ai:Provider
+        // yeniden başlatma gerektirmeden etkili olur.
+        var llmProvider = providerFactory.Get(aiRouting.CurrentValue.Provider);
+
         var queryText = $"{request.Theme} {request.LearningOutcomeCode} {request.Context}".Trim();
         var searchResults = await searchService.SearchAsync(
             queryText, topK: 5, grade: request.Grade == 0 ? null : request.Grade,

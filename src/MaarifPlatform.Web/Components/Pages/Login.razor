@@ -1,0 +1,97 @@
+@page "/login"
+@attribute [AllowAnonymous]
+@using System.Security.Claims
+@using MaarifPlatform.Infrastructure.Persistence
+@using Microsoft.AspNetCore.Authentication
+@using Microsoft.AspNetCore.Authentication.Cookies
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
+@inject IServiceScopeFactory ScopeFactory
+@inject NavigationManager NavigationManager
+
+@* Sprint 11: bu sayfa BİLİNÇLİ olarak statik SSR'da kalır (hiç @rendermode belirtilmez) —
+   App.razor'daki ambient InteractiveServer modunun aksine. Blazor Server'da HttpContext.
+   SignInAsync yalnızca gerçek bir HTTP isteği sırasında (statik render/form post) mevcuttur,
+   uzun ömürlü interaktif circuit içinde DEĞİL — bu, ASP.NET Core Identity'nin kendi Blazor
+   şablonunun da kulandığı, kaçınılmaz bir istisna (repo genelinde "render mode karıştırma"
+   kaçınılan tek yer, teknik bir zorunluluk). *@
+
+<PageTitle>Giriş</PageTitle>
+
+<div class="login-box">
+    <h1>Maarif Platform</h1>
+
+    @if (!string.IsNullOrEmpty(_error))
+    {
+        <p class="error">@_error</p>
+    }
+
+    <EditForm Model="_input" FormName="login" method="post" OnValidSubmit="HandleLoginAsync">
+        <DataAnnotationsValidator />
+        <div class="field">
+            <label>E-posta</label>
+            <InputText @bind-Value="_input.Email" />
+        </div>
+        <div class="field">
+            <label>Parola</label>
+            <InputText @bind-Value="_input.Password" type="password" />
+        </div>
+        <button type="submit">Giriş Yap</button>
+    </EditForm>
+</div>
+
+<style>
+    .login-box { max-width: 360px; margin: 4rem auto; font-family: sans-serif; }
+    .field { margin-bottom: 1rem; display: flex; flex-direction: column; gap: 0.25rem; }
+    .error { color: #b00020; }
+    button { padding: 0.5rem 1rem; }
+</style>
+
+@code {
+    [SupplyParameterFromForm]
+    private LoginInput _input { get; set; } = new();
+
+    [CascadingParameter]
+    private HttpContext HttpContext { get; set; } = default!;
+
+    [SupplyParameterFromQuery]
+    private string? ReturnUrl { get; set; }
+
+    private string? _error;
+
+    private async Task HandleLoginAsync()
+    {
+        await using var scope = ScopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<MaarifDbContext>();
+        var hasher = scope.ServiceProvider.GetRequiredService<IPasswordHasher<AppUser>>();
+
+        var user = await db.Users.FirstOrDefaultAsync(u => u.Email == _input.Email);
+        if (user is null || hasher.VerifyHashedPassword(user, user.PasswordHash, _input.Password) == PasswordVerificationResult.Failed)
+        {
+            _error = "E-posta veya parola hatalı.";
+            return;
+        }
+
+        var claims = new List<Claim>
+        {
+            new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()),
+            new Claim(ClaimTypes.Name, user.Name),
+            new Claim(ClaimTypes.Email, user.Email),
+            new Claim(ClaimTypes.Role, user.Role.ToString())
+        };
+        var identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
+
+        await HttpContext.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, new ClaimsPrincipal(identity));
+
+        NavigationManager.NavigateTo(string.IsNullOrWhiteSpace(ReturnUrl) ? "/" : ReturnUrl, forceLoad: true);
+    }
+
+    private sealed class LoginInput
+    {
+        [System.ComponentModel.DataAnnotations.Required]
+        public string Email { get; set; } = string.Empty;
+
+        [System.ComponentModel.DataAnnotations.Required]
+        public string Password { get; set; } = string.Empty;
+    }
+}

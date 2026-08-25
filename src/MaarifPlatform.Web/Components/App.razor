@@ -1,0 +1,25 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <base href="/" />
+    <link rel="stylesheet" href="app.css" />
+    <link rel="stylesheet" href="MaarifPlatform.Web.styles.css" />
+    <HeadOutlet />
+</head>
+
+<body>
+    @* Sprint 11: BURADA ambient @rendermode YOK — Login.razor'un statik SSR kalması gerekiyor
+       (HttpContext.SignInAsync yalnızca gerçek bir HTTP isteği sırasında çalışır; bir interaktif
+       circuit içindeki HttpContext cascading parametresi "ince" bir kopyadır, RequestServices/
+       Response yazma için kullanılamaz — burada ambient InteractiveServer verilirse tüm alt ağaç
+       interaktif olur ve Login çöker, çünkü interaktiften statiğe geri dönmek MÜMKÜN DEĞİLDİR,
+       yalnızca statikten interaktife geçiş desteklenir). Bunun yerine her sayfa kendi
+       @rendermode="InteractiveServer" direktifini kendisi bildirir (bkz. Login HARİÇ tüm sayfalar). *@
+    <Routes />
+    <script src="_framework/blazor.web.js"></script>
+</body>
+
+</html>

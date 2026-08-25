@@ -13,10 +13,8 @@ namespace MaarifPlatform.Infrastructure.Vision;
 /// çağrısı yapılır — <see cref="MaarifPlatform.Infrastructure.Rag.OpenAIEmbeddingProvider"/> ile
 /// aynı desen. Bu yaklaşım yeni bir NuGet bağımlılığı eklemekten kaçınır (PdfPig dersi sonrası
 /// tedarik zinciri temkinliliği).</summary>
-public class GeminiVisionProvider(HttpClient httpClient, IOptions<GeminiOptions> options) : IVisionProvider
+public class GeminiVisionProvider(HttpClient httpClient, IOptionsMonitor<GeminiOptions> optionsMonitor) : IVisionProvider
 {
-    private readonly GeminiOptions _options = options.Value;
-
     public string Name => "gemini";
 
     public Task<VisualObservation> AnalyzePageAsync(byte[] pageImagePng, CancellationToken ct = default) =>
@@ -44,7 +42,10 @@ public class GeminiVisionProvider(HttpClient httpClient, IOptions<GeminiOptions>
 
     private async Task<VisualObservation> CallGeminiAsync(byte[] imagePng, string taskPrompt, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(_options.ApiKey))
+        // Sprint 11: her çağrıda taze okunur — Admin Ayarlar'dan değiştirilen anahtar/model
+        // yeniden başlatma gerektirmeden etkili olur.
+        var options = optionsMonitor.CurrentValue;
+        if (string.IsNullOrWhiteSpace(options.ApiKey))
         {
             throw new InvalidOperationException(
                 "Vision:Gemini:ApiKey tanımlı değil. Gerçek görsel analiz için appsettings/user-secrets " +
@@ -78,7 +79,7 @@ public class GeminiVisionProvider(HttpClient httpClient, IOptions<GeminiOptions>
         };
 
         using var request = new HttpRequestMessage(
-            HttpMethod.Post, $"{_options.BaseUrl}/models/{_options.Model}:generateContent?key={_options.ApiKey}")
+            HttpMethod.Post, $"{options.BaseUrl}/models/{options.Model}:generateContent?key={options.ApiKey}")
         {
             Content = JsonContent.Create(requestBody)
         };
@@ -99,7 +100,7 @@ public class GeminiVisionProvider(HttpClient httpClient, IOptions<GeminiOptions>
         // yanlış rakamı doğruymuş gibi göstermektense CostUsd=0 bırakıldı. Gerçek anahtar
         // sağlandığında Google'ın güncel fiyat sayfasından doğrulanıp AnthropicPricing'deki
         // desenle (model→$/1M token) doldurulmalı.
-        var usage = new AiUsage(Name, _options.Model, inputTokens, outputTokens, 0m, 0);
+        var usage = new AiUsage(Name, options.Model, inputTokens, outputTokens, 0m, 0);
 
         return ParseObservation(jsonText, usage);
     }

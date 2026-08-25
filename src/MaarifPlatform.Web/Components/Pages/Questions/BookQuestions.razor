@@ -1,0 +1,80 @@
+@page "/questions/book/{BookId:guid}"
+@rendermode InteractiveServer
+@attribute [Authorize]
+@using MaarifPlatform.Infrastructure.Persistence
+@using Microsoft.EntityFrameworkCore
+@inject IServiceScopeFactory ScopeFactory
+
+<PageTitle>@(_bookTitle ?? "Sorular")</PageTitle>
+
+@if (_bookTitle is null)
+{
+    <p>Yükleniyor...</p>
+}
+else
+{
+    <h1>@_bookTitle — Sorular</h1>
+
+    @if (_questions is null || _questions.Count == 0)
+    {
+        <p>Bu kitap için henüz çıkarılmış soru yok. <a href="admin/books">Kitaplar</a> sayfasından "Soruları Çıkar"ı çalıştırın.</p>
+    }
+    else
+    {
+        <table>
+            <thead><tr><th>#</th><th>Soru</th><th>Durum</th><th></th></tr></thead>
+            <tbody>
+                @foreach (var q in _questions)
+                {
+                    <tr>
+                        <td>@q.QuestionNo</td>
+                        <td>@Truncate(q.OriginalQuestion)</td>
+                        <td><span class="status status-@q.Status.ToLowerInvariant()">@q.Status</span></td>
+                        <td><a href="@($"questions/{q.Id}")">Detay</a></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+}
+
+<style>
+    table { border-collapse: collapse; width: 100%; margin-top: 1rem; }
+    th, td { border: 1px solid #ddd; padding: 0.4rem 0.6rem; text-align: left; }
+    .status { padding: 0.1rem 0.5rem; border-radius: 4px; font-size: 0.85rem; background: #eee; }
+    .status-aiapproved, .status-editorapproved, .status-published { background: #c8e6c9; }
+    .status-manualreviewrequired, .status-rejected { background: #ffcdd2; }
+</style>
+
+@code {
+    [Parameter]
+    public Guid BookId { get; set; }
+
+    private string? _bookTitle;
+    private List<QuestionRow>? _questions;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await using var scope = ScopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<MaarifDbContext>();
+
+        _bookTitle = (await db.Books.Where(b => b.Id == BookId).Select(b => b.Title).FirstOrDefaultAsync()) ?? "Kitap bulunamadı";
+
+        _questions = await db.Questions
+            .Where(q => q.BookId == BookId)
+            .OrderBy(q => q.QuestionNo)
+            .Select(q => new QuestionRow(q.Id, q.QuestionNo,
+                db.QuestionDnas
+                    .Where(d => d.QuestionVersion!.QuestionId == q.Id)
+                    .OrderByDescending(d => d.CreatedAt)
+                    .Select(d => d.OriginalQuestion)
+                    .FirstOrDefault(),
+                q.Status.ToString()))
+            .ToListAsync();
+    }
+
+    private static string Truncate(string? text) =>
+        string.IsNullOrEmpty(text) ? "(metin yok)" : text.Length <= 100 ? text : text[..100] + "...";
+
+    private sealed record QuestionRow(Guid Id, int? QuestionNo, string? OriginalQuestion, string Status);
+}

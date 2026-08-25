@@ -12,7 +12,9 @@ src/
   MaarifPlatform.Infrastructure  — EF Core (Npgsql + pgvector), DbContext, migration'lar,
                                     PDF extraction (Docnet.Core + heuristic segmenter),
                                     RAG ingestion + retrieval, Analysis pipeline (Anthropic SDK + mock sağlayıcı)
-  MaarifPlatform.Api             — ASP.NET Core Web API (composition root), Books/ReferenceDocuments/Questions controller'ları
+  MaarifPlatform.Api             — ASP.NET Core Web API (JWT bearer, composition root), Books/ReferenceDocuments/Questions controller'ları
+  MaarifPlatform.Web             — Blazor Server UI (cookie auth), Api ile AYNI servisleri
+                                    in-process paylaşır (Infrastructure/DependencyInjection.cs)
 tests/
   MaarifPlatform.Tests           — xUnit (segmenter, chunker, embedding provider, rubric engine testleri)
 docker-compose.yml                — lokal PostgreSQL + pgvector
@@ -65,6 +67,21 @@ bir görüş alınır; `JudgeConsensusChecker` (`Application/Providers`, `Visual
 Judge karşılığı) `Passed` uyuşmazlığı veya `Judge:ConsensusScoreDeltaThreshold` (varsayılan 20)
 üstü puan farkı bulursa, birincil `Passed=true` olsa bile soru `ManualReviewRequired`'a
 zorlanır (uyuşmazlığın kendisi insan incelemesi gerektiren bir sinyaldir).
+Sprint 11 (Blazor Server UI): `MaarifPlatform.Web` — Admin (Kitaplar, Referans Dokümanları,
+Kullanıcılar, Ayarlar) + Editör (Soru Üret, Soru Detay/Analyze/Transform) ekranları. Api ile
+aynı çözümde, `Infrastructure/DependencyInjection.cs`'teki `AddMaarifPlatformCore` üzerinden
+TÜM servisleri (DbContext, orkestrasyon servisleri, provider'lar) in-process paylaşır — Api'nin
+REST/JWT katmanına dokunmaz, kendi cookie auth şemasını kullanır (parola doğrulaması aynı
+`AppUser`/`IPasswordHasher<AppUser>` üzerinden). Yeni `system_settings` tablosu +
+`DatabaseSettingsProvider` (özel `IConfigurationProvider`) appsettings.json'ı çalışma zamanında
+katman olarak geçersiz kılar — Admin Ayarlar ekranından değiştirilen API anahtarları/sağlayıcılar
+HER İKİ HOST'TA DA (aynı tabloyu okurlar) yeniden başlatma gerekmeden etkili olur. Bunun için
+`Ai:Provider`/`Vision:Provider`/`Vision:SecondaryProvider`/`Judge:SecondaryProvider` seçimi
+DI-kayıt-zamanından çalışma-zamanına taşındı (`ILLMProviderFactory`/`IVisionProviderFactory` +
+`IOptionsMonitor`, Sprint 6/10'da ikincil sağlayıcılar için kurulan desenin birincile de
+uygulanmış hali); 4 provider sınıfı (`AnthropicLLMProvider`, `OpenAiLLMProvider`,
+`GeminiVisionProvider`, `AnthropicVisionProvider`) `IOptions<T>`'ten `IOptionsMonitor<T>`'e
+geçirildi.
 
 ### PDF kütüphanesi seçimi hakkında not
 
@@ -89,12 +106,19 @@ dotnet ef database update \
   --project src/MaarifPlatform.Infrastructure \
   --startup-project src/MaarifPlatform.Infrastructure
 
-# 3. API'yi çalıştır
+# 3a. API'yi çalıştır (REST/JWT, curl/otomasyon için)
 dotnet run --project src/MaarifPlatform.Api
 
-# 4. Sağlık kontrolü
+# 3b. Web UI'ı çalıştır (Blazor Server, tarayıcıdan kullanım için — ayrı bir portta,
+#     Api'den bağımsız ama AYNI DB'yi kullanır, birlikte veya tek başına çalıştırılabilir)
+dotnet run --project src/MaarifPlatform.Web
+
+# 4. Sağlık kontrolü (yalnızca Api)
 curl http://localhost:5xxx/health
 ```
+
+İlk giriş: `Auth:BootstrapAdmin` config'inden seed edilen admin ile Web UI'daki `/login`
+sayfasından giriş yapılabilir (aynı bootstrap admin, Api'nin JWT girişiyle aynı kullanıcı).
 
 Bağlantı dizesi `src/MaarifPlatform.Api/appsettings.Development.json` içinde,
 docker-compose.yml'deki kullanıcı/parola ile eşleşecek şekilde tanımlıdır
@@ -181,3 +205,15 @@ dotnet ef migrations add <İsim> \
   birincilin puanı eşiğin ALTINDAYKEN tetiklenir — birincilin YÜKSEK puanla YANLIŞ onay
   verdiği ("confidently wrong") durumları bu mekanizma yakalamaz, bu tasarımın bilinçli bir
   sınırıdır.
+- `MaarifPlatform.Web`'deki TÜM sayfalar global `InteractiveServer` render modundadır, TEK
+  istisna `Login.razor` — HttpContext.SignInAsync yalnızca gerçek bir HTTP isteği sırasında
+  (statik SSR form post) mevcuttur, uzun ömürlü interaktif circuit içinde değil; bu, ASP.NET
+  Core Identity'nin kendi Blazor şablonunun da kullandığı kaçınılmaz bir istisnadır.
+- `Embeddings:Provider` canlı yeniden yükleme kapsamı DIŞINDADIR (bilinçli kesim) — RAG
+  ingestion admin-tetiklemeli ve seyrek olduğundan değişiklik için uygulama yeniden
+  başlatılmalıdır; diğer üç sağlayıcı grubu (Ai/Vision/Judge) tam canlı yeniden yükleme
+  destekler.
+- Blazor Server sayfaları `MaarifDbContext`/orkestrasyon servislerini DOĞRUDAN enjekte ETMEZ
+  (circuit saatlerce yaşayabilir, bu da EF Core thread-safety sorunlarına yol açar) — bunun
+  yerine her veri yükleme/buton tıklamasında `IServiceScopeFactory.CreateAsyncScope()` ile
+  taze bir scope açılır. Bu, projedeki her sayfa için zorunlu bir kural.

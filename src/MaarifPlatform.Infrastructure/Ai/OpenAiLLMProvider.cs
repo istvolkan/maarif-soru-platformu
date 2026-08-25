@@ -17,13 +17,24 @@ public class OpenAiLLMProvider : ILLMProvider
 {
     private const string EvaluateToolName = "submit_evaluation";
 
-    private readonly OpenAiOptions _options;
-    private readonly ChatClient _client;
+    private readonly IOptionsMonitor<OpenAiOptions> _optionsMonitor;
+    private ChatClient? _client;
+    private string? _clientKey;
 
-    public OpenAiLLMProvider(IOptions<OpenAiOptions> options)
+    public OpenAiLLMProvider(IOptionsMonitor<OpenAiOptions> optionsMonitor)
     {
-        _options = options.Value;
-        if (string.IsNullOrWhiteSpace(_options.ApiKey))
+        _optionsMonitor = optionsMonitor;
+    }
+
+    public string Name => "openai";
+
+    /// <summary>Sprint 11: bkz. AnthropicLLMProvider.Current() — aynı desen. ChatClient model'i
+    /// constructor'da bağladığı için (Anthropic'in aksine), anahtar VEYA model değiştiğinde
+    /// yeniden kurulur.</summary>
+    private (OpenAiOptions Options, ChatClient Client) Current()
+    {
+        var options = _optionsMonitor.CurrentValue;
+        if (string.IsNullOrWhiteSpace(options.ApiKey))
         {
             throw new InvalidOperationException(
                 "Judge:OpenAI:ApiKey tanımlı değil. Judge çapraz-sağlayıcı consensus için " +
@@ -31,20 +42,26 @@ public class OpenAiLLMProvider : ILLMProvider
                 "Judge:SecondaryProvider boş bırakılmalı.");
         }
 
-        _client = new ChatClient(model: _options.Model, apiKey: _options.ApiKey);
-    }
+        var clientKey = $"{options.ApiKey}|{options.Model}";
+        if (_client is null || _clientKey != clientKey)
+        {
+            _client = new ChatClient(model: options.Model, apiKey: options.ApiKey);
+            _clientKey = clientKey;
+        }
 
-    public string Name => "openai";
+        return (options, _client);
+    }
 
     public async Task<EvaluateQuestionResult> EvaluateQuestionAsync(EvaluateQuestionRequest request, CancellationToken ct = default)
     {
+        var (options, client) = Current();
         var tool = BuildEvaluationTool();
-        var options = new ChatCompletionOptions
+        var chatOptions = new ChatCompletionOptions
         {
-            MaxOutputTokenCount = _options.MaxTokens,
+            MaxOutputTokenCount = options.MaxTokens,
             ToolChoice = ChatToolChoice.CreateFunctionChoice(EvaluateToolName)
         };
-        options.Tools.Add(tool);
+        chatOptions.Tools.Add(tool);
 
         List<ChatMessage> messages =
         [
@@ -53,7 +70,7 @@ public class OpenAiLLMProvider : ILLMProvider
         ];
 
         var stopwatch = Stopwatch.StartNew();
-        ChatCompletion completion = await _client.CompleteChatAsync(messages, options, ct);
+        ChatCompletion completion = await client.CompleteChatAsync(messages, chatOptions, ct);
         stopwatch.Stop();
 
         var toolCall = completion.ToolCalls.FirstOrDefault(t => t.FunctionName == EvaluateToolName)
@@ -66,8 +83,8 @@ public class OpenAiLLMProvider : ILLMProvider
         var inputTokens = usage.InputTokenCount;
         var outputTokens = usage.OutputTokenCount;
         var aiUsage = new AiUsage(
-            Name, _options.Model, inputTokens, outputTokens,
-            OpenAiPricing.EstimateCostUsd(_options.Model, inputTokens, outputTokens),
+            Name, options.Model, inputTokens, outputTokens,
+            OpenAiPricing.EstimateCostUsd(options.Model, inputTokens, outputTokens),
             (int)stopwatch.ElapsedMilliseconds);
 
         return ParseEvaluateResult(input, aiUsage);

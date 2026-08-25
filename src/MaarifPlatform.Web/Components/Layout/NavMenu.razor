@@ -1,0 +1,37 @@
+<div class="nav">
+    <div class="nav-brand">Maarif Platform</div>
+    <nav>
+        <NavLink href="" Match="NavLinkMatch.All">Ana Sayfa</NavLink>
+
+        <AuthorizeView Roles="Admin,Editor">
+            <NavLink href="questions/generate">Soru Üret</NavLink>
+        </AuthorizeView>
+
+        <AuthorizeView Roles="Admin">
+            <p class="nav-section">Yönetim</p>
+            <NavLink href="admin/books">Kitaplar</NavLink>
+            <NavLink href="admin/reference-documents">Referans Dokümanları</NavLink>
+            <NavLink href="admin/users">Kullanıcılar</NavLink>
+            <NavLink href="admin/settings">Ayarlar</NavLink>
+        </AuthorizeView>
+    </nav>
+
+    <AuthorizeView>
+        <Authorized>
+            <div class="nav-user">
+                <span>@context.User.Identity?.Name (@context.User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value)</span>
+                <form method="post" action="/logout">
+                    <button type="submit">Çıkış</button>
+                </form>
+            </div>
+        </Authorized>
+    </AuthorizeView>
+</div>
+
+<style>
+    .nav { display: flex; flex-direction: column; padding: 1rem; border-bottom: 1px solid #ddd; font-family: sans-serif; }
+    .nav-brand { font-weight: 700; margin-bottom: 0.5rem; }
+    .nav nav { display: flex; gap: 1rem; flex-wrap: wrap; align-items: center; }
+    .nav-section { margin: 0 0 0 1rem; font-size: 0.8rem; color: #666; }
+    .nav-user { margin-top: 0.5rem; display: flex; gap: 0.75rem; align-items: center; font-size: 0.9rem; }
+</style>

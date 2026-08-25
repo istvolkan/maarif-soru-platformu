@@ -1,0 +1,119 @@
+@page "/admin/users"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = "Admin")]
+@using MaarifPlatform.Infrastructure.Persistence
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
+@inject IServiceScopeFactory ScopeFactory
+
+<PageTitle>Kullanıcılar</PageTitle>
+<h1>Kullanıcılar</h1>
+
+@if (_error is not null)
+{
+    <p class="error">@_error</p>
+}
+
+<EditForm Model="_form" OnValidSubmit="CreateAsync">
+    <DataAnnotationsValidator />
+    <div class="field"><label>Ad Soyad</label><InputText @bind-Value="_form.Name" /></div>
+    <div class="field"><label>E-posta</label><InputText @bind-Value="_form.Email" /></div>
+    <div class="field"><label>Parola</label><InputText @bind-Value="_form.Password" type="password" /></div>
+    <div class="field">
+        <label>Rol</label>
+        <InputSelect @bind-Value="_form.Role">
+            @foreach (var role in Enum.GetNames<UserRole>())
+            {
+                <option value="@role">@role</option>
+            }
+        </InputSelect>
+    </div>
+    <button type="submit">Kullanıcı Oluştur</button>
+</EditForm>
+
+<hr />
+
+@if (_users is null)
+{
+    <p>Yükleniyor...</p>
+}
+else
+{
+    <table>
+        <thead><tr><th>Ad Soyad</th><th>E-posta</th><th>Rol</th><th>Oluşturulma</th></tr></thead>
+        <tbody>
+            @foreach (var u in _users)
+            {
+                <tr>
+                    <td>@u.Name</td>
+                    <td>@u.Email</td>
+                    <td>@u.Role</td>
+                    <td>@u.CreatedAt.ToString("yyyy-MM-dd")</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+<style>
+    .field { margin-bottom: 0.75rem; display: flex; flex-direction: column; gap: 0.25rem; max-width: 400px; }
+    .error { color: #b00020; }
+    table { border-collapse: collapse; width: 100%; margin-top: 1rem; }
+    th, td { border: 1px solid #ddd; padding: 0.4rem 0.6rem; text-align: left; }
+</style>
+
+@code {
+    private UserForm _form = new();
+    private string? _error;
+    private List<AppUser>? _users;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        await using var scope = ScopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<MaarifDbContext>();
+        _users = await db.Users.OrderBy(u => u.Name).ToListAsync();
+    }
+
+    private async Task CreateAsync()
+    {
+        _error = null;
+        await using var scope = ScopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<MaarifDbContext>();
+        var hasher = scope.ServiceProvider.GetRequiredService<IPasswordHasher<AppUser>>();
+
+        if (!Enum.TryParse<UserRole>(_form.Role, ignoreCase: true, out var role))
+        {
+            _error = $"Geçersiz rol: {_form.Role}.";
+            return;
+        }
+
+        var emailTaken = await db.Users.AnyAsync(u => u.Email == _form.Email);
+        if (emailTaken)
+        {
+            _error = "Bu e-posta adresiyle zaten bir kullanıcı var.";
+            return;
+        }
+
+        var user = new AppUser { Name = _form.Name, Email = _form.Email, Role = role };
+        user.PasswordHash = hasher.HashPassword(user, _form.Password);
+
+        db.Users.Add(user);
+        await db.SaveChangesAsync();
+
+        _form = new();
+        await LoadAsync();
+    }
+
+    private sealed class UserForm
+    {
+        [System.ComponentModel.DataAnnotations.Required]
+        public string Name { get; set; } = string.Empty;
+        [System.ComponentModel.DataAnnotations.Required]
+        public string Email { get; set; } = string.Empty;
+        [System.ComponentModel.DataAnnotations.Required]
+        public string Password { get; set; } = string.Empty;
+        public string Role { get; set; } = nameof(UserRole.Teacher);
+    }
+}

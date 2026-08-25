@@ -1,0 +1,283 @@
+@page "/questions/{Id:guid}"
+@rendermode InteractiveServer
+@attribute [Authorize]
+@using System.Text.Json
+@using MaarifPlatform.Domain.Enums
+@using MaarifPlatform.Infrastructure.Analysis
+@using MaarifPlatform.Infrastructure.Persistence
+@using Microsoft.EntityFrameworkCore
+@inject IServiceScopeFactory ScopeFactory
+
+<PageTitle>Soru Detayı</PageTitle>
+
+@if (_loading)
+{
+    <p>Yükleniyor...</p>
+}
+else if (_detail is null)
+{
+    <p>Soru bulunamadı.</p>
+}
+else
+{
+    <h1>Soru <small>(@_detail.Id)</small></h1>
+    <p><span class="status status-@_detail.Status.ToLowerInvariant()">@_detail.Status</span></p>
+
+    @if (_message is not null)
+    {
+        <p class="ok">@_message</p>
+    }
+    @if (_error is not null)
+    {
+        <p class="error">@_error</p>
+    }
+
+    <AuthorizeView Roles="Admin,Editor" Context="editorContext">
+        <div class="actions">
+            <button disabled="@_busy" @onclick="AnalyzeAsync">Analyze</button>
+            <button disabled="@_busy" @onclick="TransformAsync">Transform</button>
+        </div>
+    </AuthorizeView>
+
+    <section>
+        <h2>Analiz</h2>
+        <dl>
+            <dt>Matematiksel Öz</dt><dd>@(_detail.MathematicalCore ?? "-")</dd>
+            <dt>Kazanım Kodu</dt><dd>@(_detail.LearningOutcomeCode ?? "-")</dd>
+            <dt>Maarif Uyum Puanı</dt><dd>@(_detail.MaarifAlignmentScore?.ToString() ?? "-")</dd>
+            <dt>Dönüşüm Seviyesi</dt><dd>@(_detail.TransformationLevel ?? "-")</dd>
+            <dt>Editör Gerekli mi</dt><dd>@(_detail.EditorRequired ? "Evet" : "Hayır")</dd>
+        </dl>
+
+        @if (_detail.AlignmentScores.Count > 0)
+        {
+            <table>
+                <thead><tr><th>Kriter</th><th>Puan</th><th>Ağırlık</th><th>Açıklama</th></tr></thead>
+                <tbody>
+                    @foreach (var a in _detail.AlignmentScores)
+                    {
+                        <tr>
+                            <td>@a.Criterion @(a.IsCriticalGate ? "⚠" : "")</td>
+                            <td>@a.Score</td>
+                            <td>@a.Weight</td>
+                            <td>@a.Explanation</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </section>
+
+    @if (_detail.RequiresVisual)
+    {
+        <section>
+            <h2>Görsel</h2>
+            <dl>
+                <dt>Tür</dt><dd>@(_detail.VisualType ?? "-")</dd>
+                <dt>Güven</dt><dd>@(_detail.VisualConfidence?.ToString() ?? "-")</dd>
+                <dt>Açıklama</dt><dd>@(_detail.VisualDescription ?? "-")</dd>
+            </dl>
+        </section>
+    }
+
+    @if (_detail.NewQuestion is not null)
+    {
+        <section>
+            <h2>Dönüşüm Sonucu</h2>
+            <p><strong>Yeni Soru:</strong> @_detail.NewQuestion</p>
+            <ul>
+                @foreach (var o in _detail.NewOptions)
+                {
+                    <li class="@(o == _detail.CorrectAnswer ? "correct" : "")">@o</li>
+                }
+            </ul>
+            <p><strong>Çözüm:</strong> @_detail.Solution</p>
+
+            @if (_detail.Distractors.Count > 0)
+            {
+                <h3>Çeldiriciler</h3>
+                <ul>
+                    @foreach (var d in _detail.Distractors)
+                    {
+                        <li>@d.OptionLabel — @(d.Explanation ?? "-") @(d.MisconceptionCode is not null ? $"[{d.MisconceptionCode}]" : "")</li>
+                    }
+                </ul>
+            }
+        </section>
+
+        <section>
+            <h2>Kalite (Judge)</h2>
+            <dl>
+                <dt>Kalite Puanı</dt><dd>@(_detail.QualityScore?.ToString() ?? "-")</dd>
+                <dt>Geçti mi</dt><dd>@(_detail.Passed is null ? "-" : _detail.Passed.Value ? "Evet" : "Hayır")</dd>
+            </dl>
+            @if (_detail.CriticalFailures.Count > 0)
+            {
+                <p class="error"><strong>Kritik Hatalar:</strong> @string.Join("; ", _detail.CriticalFailures)</p>
+            }
+            @if (_detail.QualityFlags.Count > 0)
+            {
+                <p><strong>Notlar:</strong> @string.Join("; ", _detail.QualityFlags)</p>
+            }
+        </section>
+    }
+}
+
+<style>
+    dl { display: grid; grid-template-columns: 220px 1fr; gap: 0.25rem 1rem; max-width: 700px; }
+    dt { font-weight: 600; }
+    table { border-collapse: collapse; width: 100%; margin-top: 0.5rem; }
+    th, td { border: 1px solid #ddd; padding: 0.4rem 0.6rem; text-align: left; }
+    section { margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid #eee; }
+    .actions { margin: 1rem 0; display: flex; gap: 0.5rem; }
+    .status { padding: 0.1rem 0.5rem; border-radius: 4px; font-size: 0.85rem; background: #eee; }
+    .status-aiapproved, .status-editorapproved, .status-published { background: #c8e6c9; }
+    .status-manualreviewrequired, .status-rejected { background: #ffcdd2; }
+    .correct { font-weight: 700; color: #1b5e20; }
+    .error { color: #b00020; }
+    .ok { color: #1b5e20; }
+</style>
+
+@code {
+    [Parameter]
+    public Guid Id { get; set; }
+
+    private bool _loading = true;
+    private bool _busy;
+    private string? _message;
+    private string? _error;
+    private QuestionDetailModel? _detail;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        await using var scope = ScopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<MaarifDbContext>();
+
+        var question = await db.Questions.FirstOrDefaultAsync(q => q.Id == Id);
+        if (question is null)
+        {
+            _detail = null;
+            _loading = false;
+            return;
+        }
+
+        var latestVersion = await db.QuestionVersions
+            .Include(v => v.Dna)
+            .Include(v => v.Distractors)
+            .Where(v => v.QuestionId == Id)
+            .OrderByDescending(v => v.VersionNo)
+            .FirstOrDefaultAsync();
+
+        // AlignmentScore'lar yalnızca Analyzed versiyona bağlıdır (Transform/Judge yeni versiyon
+        // üretmez) — bkz. QuestionsController.GetById'deki aynı gerekçe.
+        var analyzedVersion = await db.QuestionVersions
+            .Include(v => v.AlignmentScores)
+            .Where(v => v.QuestionId == Id && v.Stage == QuestionVersionStage.Analyzed)
+            .OrderByDescending(v => v.VersionNo)
+            .FirstOrDefaultAsync();
+
+        var newOptions = string.IsNullOrWhiteSpace(latestVersion?.Dna?.NewOptionsJson)
+            ? new List<string>()
+            : JsonSerializer.Deserialize<List<string>>(latestVersion!.Dna!.NewOptionsJson!) ?? new List<string>();
+
+        var (qualityFlags, criticalFailures) = SplitQualityFlags(latestVersion?.Dna?.QualityFlagsJson);
+
+        bool? passed = latestVersion?.Dna?.QualityScore is null
+            ? null
+            : question.Status is QuestionStatus.AiApproved or QuestionStatus.EditorApproved or QuestionStatus.Published;
+
+        _detail = new QuestionDetailModel(
+            question.Id, question.Status.ToString(),
+            latestVersion?.Dna?.MathematicalCore, latestVersion?.Dna?.LearningOutcomeCode,
+            latestVersion?.Dna?.MaarifAlignmentScore, latestVersion?.Dna?.TransformationLevel?.ToString(),
+            latestVersion?.Dna?.EditorRequired ?? false,
+            latestVersion?.Dna?.RequiresVisual ?? false, latestVersion?.Dna?.VisualType,
+            latestVersion?.Dna?.VisualConfidence, latestVersion?.Dna?.VisualDescription,
+            (analyzedVersion?.AlignmentScores ?? new List<AlignmentScore>())
+                .Select(a => new AlignmentRow(a.Criterion, a.Score, a.Weight, a.Explanation, a.IsCriticalGate)).ToList(),
+            latestVersion?.Dna?.NewQuestion, newOptions, latestVersion?.Dna?.CorrectAnswer, latestVersion?.Dna?.Solution,
+            (latestVersion?.Distractors ?? new List<Distractor>())
+                .Select(d => new DistractorRow(d.OptionLabel, d.MisconceptionCode, d.Explanation)).ToList(),
+            latestVersion?.Dna?.QualityScore, passed, qualityFlags, criticalFailures);
+
+        _loading = false;
+    }
+
+    private static (List<string> QualityFlags, List<string> CriticalFailures) SplitQualityFlags(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return (new List<string>(), new List<string>());
+        }
+
+        var all = JsonSerializer.Deserialize<List<string>>(json) ?? new List<string>();
+        var critical = all.Where(f => f.StartsWith("critical:", StringComparison.Ordinal)).Select(f => f["critical:".Length..]).ToList();
+        var flags = all.Where(f => !f.StartsWith("critical:", StringComparison.Ordinal)).ToList();
+        return (flags, critical);
+    }
+
+    private async Task AnalyzeAsync()
+    {
+        _busy = true;
+        _error = null;
+        _message = null;
+        await using var scope = ScopeFactory.CreateAsyncScope();
+        var service = scope.ServiceProvider.GetRequiredService<AnalysisOrchestrationService>();
+        try
+        {
+            var result = await service.AnalyzeAsync(Id);
+            _message = $"Analiz tamamlandı: skor {result.WeightedScore}, seviye {result.TransformationLevel}.";
+        }
+        catch (InvalidOperationException ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+
+        await LoadAsync();
+    }
+
+    private async Task TransformAsync()
+    {
+        _busy = true;
+        _error = null;
+        _message = null;
+        await using var scope = ScopeFactory.CreateAsyncScope();
+        var service = scope.ServiceProvider.GetRequiredService<TransformationOrchestrationService>();
+        try
+        {
+            var result = await service.TransformAsync(Id);
+            _message = result.Skipped
+                ? $"Dönüşüm atlandı ({result.TransformationLevel}) — doğrudan AiApproved."
+                : $"Dönüşüm tamamlandı: kalite puanı {result.QualityScore}, geçti mi {result.Passed}.";
+        }
+        catch (InvalidOperationException ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+
+        await LoadAsync();
+    }
+
+    private sealed record QuestionDetailModel(
+        Guid Id, string Status, string? MathematicalCore, string? LearningOutcomeCode,
+        int? MaarifAlignmentScore, string? TransformationLevel, bool EditorRequired,
+        bool RequiresVisual, string? VisualType, decimal? VisualConfidence, string? VisualDescription,
+        List<AlignmentRow> AlignmentScores,
+        string? NewQuestion, List<string> NewOptions, string? CorrectAnswer, string? Solution,
+        List<DistractorRow> Distractors,
+        int? QualityScore, bool? Passed, List<string> QualityFlags, List<string> CriticalFailures);
+
+    private sealed record AlignmentRow(string Criterion, decimal Score, decimal Weight, string Explanation, bool IsCriticalGate);
+    private sealed record DistractorRow(string OptionLabel, string? MisconceptionCode, string? Explanation);
+}

@@ -1,0 +1,93 @@
+@page "/questions/generate"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = "Admin,Editor")]
+@using MaarifPlatform.Application.Providers
+@using MaarifPlatform.Infrastructure.Analysis
+@inject IServiceScopeFactory ScopeFactory
+@inject NavigationManager NavigationManager
+
+<PageTitle>Yeni Soru Üret</PageTitle>
+<h1>Yeni Soru Üret</h1>
+<p>PDF kaynağı olmadan, sıfırdan bir soru üretir — RAG ile ilgili Sınıf/Ders için ingest edilmiş referans dokümanı varsa üretim ona dayanır.</p>
+
+@if (_error is not null)
+{
+    <p class="error">@_error</p>
+}
+
+<EditForm Model="_form" OnValidSubmit="GenerateAsync">
+    <DataAnnotationsValidator />
+    <div class="field"><label>Sınıf</label><InputNumber @bind-Value="_form.Grade" /></div>
+    <div class="field"><label>Ders</label><InputText @bind-Value="_form.Subject" /></div>
+    <div class="field"><label>Tema</label><InputText @bind-Value="_form.Theme" /></div>
+    <div class="field"><label>Kazanım Kodu</label><InputText @bind-Value="_form.LearningOutcomeCode" /></div>
+    <div class="field">
+        <label>Zorluk</label>
+        <InputSelect @bind-Value="_form.Difficulty">
+            @foreach (var level in Enum.GetNames<DifficultyLevel>())
+            {
+                <option value="@level">@level</option>
+            }
+        </InputSelect>
+    </div>
+    <div class="field"><label>Soru Tipi</label><InputText @bind-Value="_form.QuestionType" placeholder="örn. ÇoktanSeçmeli" /></div>
+    <div class="field"><label>Bağlam/Senaryo</label><InputTextArea @bind-Value="_form.Context" rows="3" /></div>
+    <div class="field"><label>Muhakeme Tipi</label><InputText @bind-Value="_form.ReasoningType" placeholder="örn. AkılYürütme" /></div>
+    <button type="submit" disabled="@_busy">@(_busy ? "Üretiliyor..." : "Üret")</button>
+</EditForm>
+
+<style>
+    .field { margin-bottom: 0.75rem; display: flex; flex-direction: column; gap: 0.25rem; max-width: 500px; }
+    .error { color: #b00020; }
+</style>
+
+@code {
+    private GenerateForm _form = new();
+    private bool _busy;
+    private string? _error;
+
+    private async Task GenerateAsync()
+    {
+        _busy = true;
+        _error = null;
+
+        await using var scope = ScopeFactory.CreateAsyncScope();
+        var service = scope.ServiceProvider.GetRequiredService<GenerationOrchestrationService>();
+
+        try
+        {
+            var result = await service.GenerateAsync(new GenerateQuestionRequest(
+                _form.Grade, _form.Subject, _form.Theme, _form.LearningOutcomeCode,
+                _form.Difficulty, _form.QuestionType, _form.Context, _form.ReasoningType, []));
+
+            NavigationManager.NavigateTo($"questions/{result.QuestionId}");
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private sealed class GenerateForm
+    {
+        [System.ComponentModel.DataAnnotations.Required]
+        public int Grade { get; set; } = 9;
+        [System.ComponentModel.DataAnnotations.Required]
+        public string Subject { get; set; } = "Matematik";
+        [System.ComponentModel.DataAnnotations.Required]
+        public string Theme { get; set; } = string.Empty;
+        [System.ComponentModel.DataAnnotations.Required]
+        public string LearningOutcomeCode { get; set; } = string.Empty;
+        public string Difficulty { get; set; } = nameof(MaarifPlatform.Domain.Enums.DifficultyLevel.Medium);
+        [System.ComponentModel.DataAnnotations.Required]
+        public string QuestionType { get; set; } = "ÇoktanSeçmeli";
+        [System.ComponentModel.DataAnnotations.Required]
+        public string Context { get; set; } = string.Empty;
+        [System.ComponentModel.DataAnnotations.Required]
+        public string ReasoningType { get; set; } = "AkılYürütme";
+    }
+}

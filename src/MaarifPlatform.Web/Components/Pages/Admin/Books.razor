@@ -1,0 +1,162 @@
+@page "/admin/books"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = "Admin")]
+@using MaarifPlatform.Application.Storage
+@using MaarifPlatform.Infrastructure.Extraction
+@using MaarifPlatform.Infrastructure.Persistence
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.EntityFrameworkCore
+@inject IServiceScopeFactory ScopeFactory
+
+<PageTitle>Kitaplar</PageTitle>
+<h1>Kitaplar</h1>
+<p>Maarif model ders kitaplarını buradan yükleyin — yükledikten sonra "Soruları Çıkar" ile PDF'ten soru bloklarını çıkarabilirsiniz.</p>
+
+@if (_error is not null)
+{
+    <p class="error">@_error</p>
+}
+
+<EditForm Model="_form" OnValidSubmit="UploadAsync">
+    <DataAnnotationsValidator />
+    <div class="field"><label>Başlık</label><InputText @bind-Value="_form.Title" /></div>
+    <div class="field"><label>Sınıf</label><InputNumber @bind-Value="_form.Grade" /></div>
+    <div class="field"><label>Ders</label><InputText @bind-Value="_form.Subject" /></div>
+    <div class="field"><label>Yayınevi</label><InputText @bind-Value="_form.Publisher" /></div>
+    <div class="field"><label>PDF Dosyası</label><InputFile OnChange="OnFileSelected" accept=".pdf" /></div>
+    <button type="submit" disabled="@(_selectedFile is null || _uploading)">@(_uploading ? "Yükleniyor..." : "Yükle")</button>
+</EditForm>
+
+<hr />
+
+@if (_books is null)
+{
+    <p>Yükleniyor...</p>
+}
+else
+{
+    <table>
+        <thead>
+            <tr><th>Başlık</th><th>Sınıf</th><th>Ders</th><th>Kaynak</th><th>Sayfa</th><th>Soru</th><th></th></tr>
+        </thead>
+        <tbody>
+            @foreach (var b in _books)
+            {
+                <tr>
+                    <td>@b.Title</td>
+                    <td>@b.Grade</td>
+                    <td>@b.Subject</td>
+                    <td>@b.SourceType</td>
+                    <td>@b.TotalPages</td>
+                    <td><a href="@($"questions/book/{b.Id}")">@b.QuestionCount soru</a></td>
+                    <td>
+                        @if (b.TotalPages is null)
+                        {
+                            <button @onclick="() => ExtractAsync(b.Id)">Soruları Çıkar</button>
+                        }
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+<style>
+    .field { margin-bottom: 0.75rem; display: flex; flex-direction: column; gap: 0.25rem; max-width: 400px; }
+    .error { color: #b00020; }
+    table { border-collapse: collapse; width: 100%; margin-top: 1rem; }
+    th, td { border: 1px solid #ddd; padding: 0.4rem 0.6rem; text-align: left; }
+</style>
+
+@code {
+    private BookForm _form = new();
+    private IBrowserFile? _selectedFile;
+    private bool _uploading;
+    private string? _error;
+    private List<BookRow>? _books;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        await using var scope = ScopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<MaarifDbContext>();
+
+        _books = await db.Books
+            .OrderByDescending(b => b.CreatedAt)
+            .Select(b => new BookRow(b.Id, b.Title, b.Grade, b.Subject, b.SourceType.ToString(), b.TotalPages,
+                db.Questions.Count(q => q.BookId == b.Id)))
+            .ToListAsync();
+    }
+
+    private void OnFileSelected(InputFileChangeEventArgs e) => _selectedFile = e.File;
+
+    private async Task UploadAsync()
+    {
+        if (_selectedFile is null)
+        {
+            return;
+        }
+
+        _uploading = true;
+        _error = null;
+        try
+        {
+            await using var scope = ScopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<MaarifDbContext>();
+            var storage = scope.ServiceProvider.GetRequiredService<IBookFileStorage>();
+
+            var book = new Book { Title = _form.Title, Grade = _form.Grade, Subject = _form.Subject, Publisher = _form.Publisher };
+
+            await using (var stream = _selectedFile.OpenReadStream(maxAllowedSize: 200 * 1024 * 1024))
+            {
+                book.StorageUri = await storage.SaveAsync(book.Id, _selectedFile.Name, stream);
+            }
+
+            db.Books.Add(book);
+            await db.SaveChangesAsync();
+
+            _form = new();
+            _selectedFile = null;
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _uploading = false;
+        }
+    }
+
+    private async Task ExtractAsync(Guid bookId)
+    {
+        _error = null;
+        await using var scope = ScopeFactory.CreateAsyncScope();
+        var extractionService = scope.ServiceProvider.GetRequiredService<BookExtractionService>();
+
+        try
+        {
+            await extractionService.ExtractAsync(bookId);
+        }
+        catch (InvalidOperationException ex)
+        {
+            _error = ex.Message;
+        }
+
+        await LoadAsync();
+    }
+
+    private sealed class BookForm
+    {
+        [System.ComponentModel.DataAnnotations.Required]
+        public string Title { get; set; } = string.Empty;
+        public int? Grade { get; set; }
+        [System.ComponentModel.DataAnnotations.Required]
+        public string Subject { get; set; } = string.Empty;
+        public string? Publisher { get; set; }
+    }
+
+    private sealed record BookRow(Guid Id, string Title, int? Grade, string Subject, string SourceType, int? TotalPages, int QuestionCount);
+}

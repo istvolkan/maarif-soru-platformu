@@ -1,0 +1,19 @@
+@page "/"
+@rendermode InteractiveServer
+@attribute [Authorize]
+
+<PageTitle>Maarif Platform</PageTitle>
+
+<h1>Maarif Soru Dönüşüm Platformu</h1>
+
+<AuthorizeView>
+    <Authorized>
+        <p>Hoş geldiniz, @context.User.Identity?.Name.</p>
+        <AuthorizeView Roles="Admin" Context="adminContext">
+            <p>Sol menüden kitap yükleyip soruları çıkarabilir, kullanıcı ve API anahtarı ayarlarını yönetebilirsiniz.</p>
+        </AuthorizeView>
+        <AuthorizeView Roles="Admin,Editor" Context="editorContext">
+            <p><a href="questions/generate">Yeni bir soru üretmek</a> için tıklayın, ya da kitap listesinden bir kitabın sorularına gidin.</p>
+        </AuthorizeView>
+    </Authorized>
+</AuthorizeView>

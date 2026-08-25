@@ -22,30 +22,48 @@ public class AnthropicLLMProvider : ILLMProvider
     private const string EvaluateToolName = "submit_evaluation";
     private const string GenerateToolName = "submit_generation";
 
-    private readonly AnthropicOptions _options;
-    private readonly AnthropicClient _client;
+    private readonly IOptionsMonitor<AnthropicOptions> _optionsMonitor;
+    private AnthropicClient? _client;
+    private string? _clientKey;
 
-    public AnthropicLLMProvider(IOptions<AnthropicOptions> options)
+    public AnthropicLLMProvider(IOptionsMonitor<AnthropicOptions> optionsMonitor)
     {
-        _options = options.Value;
-        if (string.IsNullOrWhiteSpace(_options.ApiKey))
+        _optionsMonitor = optionsMonitor;
+    }
+
+    public string Name => "anthropic";
+
+    /// <summary>Sprint 11: IOptionsMonitor.CurrentValue her çağrıda taze okunur — Admin Ayarlar
+    /// ekranından değiştirilen Ai:Anthropic:ApiKey/Model yeniden başlatma gerektirmeden etkili
+    /// olur. Client yalnızca anahtar gerçekten değiştiğinde yeniden kurulur (gereksiz nesne
+    /// oluşturmayı önler). Fırlatma constructor-zamanından ilk-çağrı-zamanına taşındı — hiç
+    /// çağrılmayan bir sağlayıcının (örn. Ai:Provider=Local iken) artık anahtara ihtiyacı yok.</summary>
+    private (AnthropicOptions Options, AnthropicClient Client) Current()
+    {
+        var options = _optionsMonitor.CurrentValue;
+        if (string.IsNullOrWhiteSpace(options.ApiKey))
         {
             throw new InvalidOperationException(
                 "Ai:Anthropic:ApiKey tanımlı değil. Gerçek analiz için appsettings/user-secrets " +
                 "üzerinden bir API anahtarı sağlanmalı; anahtar yoksa Ai:Provider=Local kullanın.");
         }
 
-        _client = new AnthropicClient { ApiKey = _options.ApiKey };
-    }
+        if (_client is null || _clientKey != options.ApiKey)
+        {
+            _client = new AnthropicClient { ApiKey = options.ApiKey };
+            _clientKey = options.ApiKey;
+        }
 
-    public string Name => "anthropic";
+        return (options, _client);
+    }
 
     public async Task<AnalyzeQuestionResult> AnalyzeQuestionAsync(AnalyzeQuestionRequest request, CancellationToken ct = default)
     {
+        var (options, client) = Current();
         var parameters = new MessageCreateParams
         {
-            Model = _options.Model,
-            MaxTokens = _options.MaxTokens,
+            Model = options.Model,
+            MaxTokens = options.MaxTokens,
             System = BuildSystemPrompt(request),
             Tools = [BuildAnalysisTool()],
             ToolChoice = new ToolChoiceTool { Name = ToolName },
@@ -53,7 +71,7 @@ public class AnthropicLLMProvider : ILLMProvider
         };
 
         var stopwatch = Stopwatch.StartNew();
-        var response = await _client.Messages.Create(parameters, ct);
+        var response = await client.Messages.Create(parameters, ct);
         stopwatch.Stop();
 
         var toolUse = response.Content
@@ -66,10 +84,10 @@ public class AnthropicLLMProvider : ILLMProvider
         var outputTokens = (int)response.Usage.OutputTokens;
         var usage = new AiUsage(
             Name,
-            _options.Model,
+            options.Model,
             inputTokens,
             outputTokens,
-            AnthropicPricing.EstimateCostUsd(_options.Model, inputTokens, outputTokens),
+            AnthropicPricing.EstimateCostUsd(options.Model, inputTokens, outputTokens),
             (int)stopwatch.ElapsedMilliseconds);
 
         return ParseResult(toolUse.Input, usage);
@@ -77,10 +95,11 @@ public class AnthropicLLMProvider : ILLMProvider
 
     public async Task<TransformQuestionResult> TransformQuestionAsync(TransformQuestionRequest request, CancellationToken ct = default)
     {
+        var (options, client) = Current();
         var parameters = new MessageCreateParams
         {
-            Model = _options.Model,
-            MaxTokens = _options.MaxTokens,
+            Model = options.Model,
+            MaxTokens = options.MaxTokens,
             System = BuildTransformSystemPrompt(request),
             Tools = [BuildTransformationTool()],
             ToolChoice = new ToolChoiceTool { Name = TransformToolName },
@@ -88,7 +107,7 @@ public class AnthropicLLMProvider : ILLMProvider
         };
 
         var stopwatch = Stopwatch.StartNew();
-        var response = await _client.Messages.Create(parameters, ct);
+        var response = await client.Messages.Create(parameters, ct);
         stopwatch.Stop();
 
         var toolUse = response.Content
@@ -97,16 +116,17 @@ public class AnthropicLLMProvider : ILLMProvider
             .FirstOrDefault(b => b.Name == TransformToolName)
             ?? throw new InvalidOperationException("Anthropic yanıtında beklenen submit_transformation tool_use bloğu bulunamadı.");
 
-        var usage = BuildUsage(response, stopwatch);
+        var usage = BuildUsage(response, stopwatch, options);
         return ParseTransformResult(toolUse.Input, usage);
     }
 
     public async Task<EvaluateQuestionResult> EvaluateQuestionAsync(EvaluateQuestionRequest request, CancellationToken ct = default)
     {
+        var (options, client) = Current();
         var parameters = new MessageCreateParams
         {
-            Model = _options.Model,
-            MaxTokens = _options.MaxTokens,
+            Model = options.Model,
+            MaxTokens = options.MaxTokens,
             System = BuildEvaluateSystemPrompt(request),
             Tools = [BuildEvaluationTool()],
             ToolChoice = new ToolChoiceTool { Name = EvaluateToolName },
@@ -114,7 +134,7 @@ public class AnthropicLLMProvider : ILLMProvider
         };
 
         var stopwatch = Stopwatch.StartNew();
-        var response = await _client.Messages.Create(parameters, ct);
+        var response = await client.Messages.Create(parameters, ct);
         stopwatch.Stop();
 
         var toolUse = response.Content
@@ -123,16 +143,17 @@ public class AnthropicLLMProvider : ILLMProvider
             .FirstOrDefault(b => b.Name == EvaluateToolName)
             ?? throw new InvalidOperationException("Anthropic yanıtında beklenen submit_evaluation tool_use bloğu bulunamadı.");
 
-        var usage = BuildUsage(response, stopwatch);
+        var usage = BuildUsage(response, stopwatch, options);
         return ParseEvaluateResult(toolUse.Input, usage);
     }
 
     public async Task<GenerateQuestionResult> GenerateQuestionAsync(GenerateQuestionRequest request, CancellationToken ct = default)
     {
+        var (options, client) = Current();
         var parameters = new MessageCreateParams
         {
-            Model = _options.Model,
-            MaxTokens = _options.MaxTokens,
+            Model = options.Model,
+            MaxTokens = options.MaxTokens,
             System = BuildGenerateSystemPrompt(request),
             Tools = [BuildGenerationTool()],
             ToolChoice = new ToolChoiceTool { Name = GenerateToolName },
@@ -140,7 +161,7 @@ public class AnthropicLLMProvider : ILLMProvider
         };
 
         var stopwatch = Stopwatch.StartNew();
-        var response = await _client.Messages.Create(parameters, ct);
+        var response = await client.Messages.Create(parameters, ct);
         stopwatch.Stop();
 
         var toolUse = response.Content
@@ -149,17 +170,17 @@ public class AnthropicLLMProvider : ILLMProvider
             .FirstOrDefault(b => b.Name == GenerateToolName)
             ?? throw new InvalidOperationException("Anthropic yanıtında beklenen submit_generation tool_use bloğu bulunamadı.");
 
-        var usage = BuildUsage(response, stopwatch);
+        var usage = BuildUsage(response, stopwatch, options);
         return ParseGenerateResult(toolUse.Input, usage);
     }
 
-    private AiUsage BuildUsage(Message response, Stopwatch stopwatch)
+    private AiUsage BuildUsage(Message response, Stopwatch stopwatch, AnthropicOptions options)
     {
         var inputTokens = (int)response.Usage.InputTokens;
         var outputTokens = (int)response.Usage.OutputTokens;
         return new AiUsage(
-            Name, _options.Model, inputTokens, outputTokens,
-            AnthropicPricing.EstimateCostUsd(_options.Model, inputTokens, outputTokens),
+            Name, options.Model, inputTokens, outputTokens,
+            AnthropicPricing.EstimateCostUsd(options.Model, inputTokens, outputTokens),
             (int)stopwatch.ElapsedMilliseconds);
     }
 

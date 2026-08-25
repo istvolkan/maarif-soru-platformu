@@ -4,10 +4,12 @@ using MaarifPlatform.Application.Providers;
 using MaarifPlatform.Application.Rubric;
 using MaarifPlatform.Domain.Entities;
 using MaarifPlatform.Domain.Enums;
+using MaarifPlatform.Infrastructure.Ai;
 using MaarifPlatform.Infrastructure.Persistence;
 using MaarifPlatform.Infrastructure.Rag;
 using MaarifPlatform.Infrastructure.Vision;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace MaarifPlatform.Infrastructure.Analysis;
 
@@ -27,12 +29,18 @@ public sealed record AnalysisSummary(
 /// kural görsel analiz için de geçerlidir: Vision gözleminde uyarı/düşük güven varsa editöre düşer.</summary>
 public class AnalysisOrchestrationService(
     MaarifDbContext db,
-    ILLMProvider llmProvider,
+    ILLMProviderFactory providerFactory,
+    IOptionsMonitor<AiRoutingOptions> aiRouting,
     ReferenceSearchService searchService,
     VisionAnalysisService visionAnalysisService)
 {
     public async Task<AnalysisSummary> AnalyzeAsync(Guid questionId, CancellationToken ct = default)
     {
+        // Sprint 11: her çağrıda taze okunur — Admin Ayarlar'dan değiştirilen Ai:Provider
+        // yeniden başlatma gerektirmeden etkili olur (Judge'ın Sprint 10'da kurduğu isimle-
+        // çözümleme deseninin birincile de uygulanmış hali).
+        var llmProvider = providerFactory.Get(aiRouting.CurrentValue.Provider);
+
         var question = await db.Questions.FirstOrDefaultAsync(q => q.Id == questionId, ct)
             ?? throw new InvalidOperationException($"Soru bulunamadı: {questionId}");
 
