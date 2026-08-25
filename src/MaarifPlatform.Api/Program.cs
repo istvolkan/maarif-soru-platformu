@@ -77,6 +77,24 @@ else
     builder.Services.AddScoped<ILLMProvider, LocalHeuristicLLMProvider>();
 }
 
+// §8/§10 Judge Provider Disagreement. Judge:SecondaryProvider boşsa (varsayılan) consensus
+// akışı tamamen devre dışıdır, Sprint 8 davranışı bire bir korunur — ek maliyet yalnızca
+// açıkça yapılandırıldığında oluşur (Vision'ın SecondaryProvider'ıyla aynı ilke). Birincil
+// sağlayıcı yukarıdaki Ai:Provider switch'inden gelmeye devam eder; bu blok yalnızca Judge'ın
+// ikincil/consensus çağrısı için isimle çözümleme ekler.
+builder.Services.AddScoped<AnthropicLLMProvider>();
+builder.Services.AddScoped<LocalHeuristicLLMProvider>();
+builder.Services.Configure<OpenAiOptions>(builder.Configuration.GetSection("Judge:OpenAI"));
+builder.Services.AddScoped<OpenAiLLMProvider>();
+builder.Services.AddScoped<ILLMProviderFactory, LLMProviderFactory>();
+
+builder.Services.AddSingleton(Options.Create(new JudgeRoutingOptions
+{
+    SecondaryProvider = builder.Configuration["Judge:SecondaryProvider"],
+    ConsensusConfidenceThreshold = builder.Configuration.GetValue<decimal?>("Judge:ConsensusConfidenceThreshold") ?? 0.7m,
+    ConsensusScoreDeltaThreshold = builder.Configuration.GetValue<int?>("Judge:ConsensusScoreDeltaThreshold") ?? 20
+}));
+
 builder.Services.AddScoped<AnalysisOrchestrationService>();
 builder.Services.AddScoped<TransformationOrchestrationService>();
 builder.Services.AddScoped<GenerationOrchestrationService>();

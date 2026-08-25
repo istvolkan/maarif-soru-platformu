@@ -54,6 +54,17 @@ bir `Original` `QuestionVersion`/`QuestionDna` olarak kalıcılaştırılır; `A
 DEĞİŞTİRİLMEDEN üzerinde çalışır. `Question.BookId` zorunlu olduğundan üretilen sorular
 (Grade,Subject) başına paylaşılan bir placeholder `Book`'a (`SourceType.Generated`) bağlanır —
 `POST /api/questions/generate` (`Admin,Editor`).
+Sprint 10 (§8/§10 Judge Çapraz-Sağlayıcı Consensus): ikinci gerçek LLM sağlayıcısı olarak
+resmi `OpenAI` paketi eklendi (`OpenAiLLMProvider` — yalnızca `EvaluateQuestionAsync`
+implemente edilmiştir, Judge ikincil sağlayıcısı olarak kullanılır). `ILLMProviderFactory`
+(Vision'daki `IVisionProviderFactory`'nin birebir karşılığı) ile isimle çözümlenir.
+`Judge:SecondaryProvider` boşsa (varsayılan) consensus akışı tamamen devre dışıdır — Sprint 8
+davranışı bire bir korunur, ek maliyet yalnızca açıkça yapılandırıldığında oluşur. Birincilin
+`QualityScore/100`'ü `Judge:ConsensusConfidenceThreshold` (varsayılan 0.7) altındaysa ikinci
+bir görüş alınır; `JudgeConsensusChecker` (`Application/Providers`, `VisualConsensusChecker`'ın
+Judge karşılığı) `Passed` uyuşmazlığı veya `Judge:ConsensusScoreDeltaThreshold` (varsayılan 20)
+üstü puan farkı bulursa, birincil `Passed=true` olsa bile soru `ManualReviewRequired`'a
+zorlanır (uyuşmazlığın kendisi insan incelemesi gerektiren bir sinyaldir).
 
 ### PDF kütüphanesi seçimi hakkında not
 
@@ -162,3 +173,11 @@ dotnet ef migrations add <İsim> \
 - Üretilen sorular `Question.Status` alanında PDF'ten çıkarılmışlardan ayırt edilmez (ikisi de
   `Extracted` ile başlar — yeni bir enum değeri icat edilmedi). Ayrım gerekirse
   `Book.SourceType==Generated` veya `QuestionVersion.CreatedBy==<provider adı>` kullanılmalı.
+- `OpenAI` paketi + `Judge:OpenAI:Model` varsayılanı (`gpt-4o`) da `GeminiOptions.Model`
+  gibi doğrulanmadan güvenilmemeli — devreye almadan önce OpenAI'nin güncel model
+  dokümantasyonundan teyit edilmelidir.
+- Judge disagreement mesajları ayrı bir DTO alanı olmadan mevcut `QualityFlags`'a
+  `disagreement:` önekiyle eklenir (bilinçli kapsam kararı, Sprint 10). İkincil çağrı yalnızca
+  birincilin puanı eşiğin ALTINDAYKEN tetiklenir — birincilin YÜKSEK puanla YANLIŞ onay
+  verdiği ("confidently wrong") durumları bu mekanizma yakalamaz, bu tasarımın bilinçli bir
+  sınırıdır.

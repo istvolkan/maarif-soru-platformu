@@ -3,9 +3,11 @@ using MaarifPlatform.Application.Providers;
 using MaarifPlatform.Application.Rubric;
 using MaarifPlatform.Domain.Entities;
 using MaarifPlatform.Domain.Enums;
+using MaarifPlatform.Infrastructure.Ai;
 using MaarifPlatform.Infrastructure.Persistence;
 using MaarifPlatform.Infrastructure.Rag;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace MaarifPlatform.Infrastructure.Analysis;
 
@@ -30,8 +32,13 @@ public sealed record TransformationSummary(
 public class TransformationOrchestrationService(
     MaarifDbContext db,
     ILLMProvider llmProvider,
-    ReferenceSearchService searchService)
+    ReferenceSearchService searchService,
+    ILLMProviderFactory providerFactory,
+    IOptions<JudgeRoutingOptions> judgeRoutingOptions)
 {
+    private readonly JudgeRoutingOptions _judgeRouting = judgeRoutingOptions.Value;
+
+
     public async Task<TransformationSummary> TransformAsync(Guid questionId, CancellationToken ct = default)
     {
         var question = await db.Questions.FirstOrDefaultAsync(q => q.Id == questionId, ct)
@@ -84,7 +91,7 @@ public class TransformationOrchestrationService(
             analyzedDna.OriginalQuestion ?? string.Empty, decision.ToString(), analysisResult, grounding);
         var transformResult = await llmProvider.TransformQuestionAsync(transformRequest, ct);
 
-        db.AiRuns.Add(BuildAiRun(questionId, PipelineStage.Transformation, transformResult.Usage));
+        db.AiRuns.Add(BuildAiRun(questionId, PipelineStage.Transformation, transformResult.Usage, llmProvider.Name));
 
         var nextVersionNo = await db.QuestionVersions
             .Where(v => v.QuestionId == questionId)
@@ -160,16 +167,37 @@ public class TransformationOrchestrationService(
             transformResult.CorrectAnswer, transformResult.Solution, grounding);
         var evalResult = await llmProvider.EvaluateQuestionAsync(evalRequest, ct);
 
-        db.AiRuns.Add(BuildAiRun(questionId, PipelineStage.Judge, evalResult.Usage));
+        db.AiRuns.Add(BuildAiRun(questionId, PipelineStage.Judge, evalResult.Usage, llmProvider.Name));
+
+        // §8/§10 Judge Provider Disagreement: SecondaryProvider boşsa (varsayılan) bu blok hiç
+        // çalışmaz, Sprint 8 davranışı bire bir korunur. Yalnızca birincilin puanı eşiğin
+        // ALTINDAYKEN ikinci bir görüş alınır (Vision'ın düşük-güvende-ikinci-görüş mantığıyla
+        // aynı) — birincilin YÜKSEK puanla YANLIŞ onay verdiği durumları bu mekanizma yakalamaz,
+        // bu bilinçli bir sınır.
+        var disagreementFlags = new List<string>();
+        if (!string.IsNullOrWhiteSpace(_judgeRouting.SecondaryProvider)
+            && evalResult.QualityScore / 100m < _judgeRouting.ConsensusConfidenceThreshold)
+        {
+            var secondaryProvider = providerFactory.Get(_judgeRouting.SecondaryProvider);
+            var secondaryEval = await secondaryProvider.EvaluateQuestionAsync(evalRequest, ct);
+            db.AiRuns.Add(BuildAiRun(questionId, PipelineStage.Judge, secondaryEval.Usage, secondaryProvider.Name));
+            disagreementFlags.AddRange(
+                JudgeConsensusChecker.Compare(evalResult, secondaryEval, _judgeRouting.ConsensusScoreDeltaThreshold));
+        }
 
         // Judge, az önce eklenen Transformed DNA satırını yerinde günceller — Vision'ın
-        // Analyzed'ı yerinde güncellemesiyle aynı desen, ayrı bir versiyon üretmez.
+        // Analyzed'ı yerinde güncellemesiyle aynı desen, ayrı bir versiyon üretmez. Birincil
+        // sonuç kanonik kalır (Vision'ın primary observation'ı kanonik tutmasıyla aynı ilke);
+        // disagreement mesajları ayrı bir DTO alanı olmadan mevcut QualityFlags'a eklenir.
         dna.QualityScore = evalResult.QualityScore;
         dna.QualityFlagsJson = JsonSerializer.Serialize(
-            evalResult.CriticalFailures.Select(f => $"critical:{f}").Concat(evalResult.QualityFlags));
-        dna.EditorRequired = !evalResult.Passed;
+            evalResult.CriticalFailures.Select(f => $"critical:{f}").Concat(evalResult.QualityFlags).Concat(disagreementFlags));
+        dna.EditorRequired = !evalResult.Passed || disagreementFlags.Count > 0;
 
-        question.Status = evalResult.Passed ? QuestionStatus.AiApproved : QuestionStatus.ManualReviewRequired;
+        // Sağlayıcılar arası uyuşmazlık, birincil Passed=true olsa bile ManualReviewRequired'a
+        // zorlar — uyuşmazlığın kendisi insan incelemesi gerektiren bir sinyaldir.
+        question.Status = (evalResult.Passed && disagreementFlags.Count == 0)
+            ? QuestionStatus.AiApproved : QuestionStatus.ManualReviewRequired;
         question.UpdatedAt = DateTimeOffset.UtcNow;
 
         await db.SaveChangesAsync(ct);
@@ -178,11 +206,11 @@ public class TransformationOrchestrationService(
             evalResult.QualityScore, evalResult.Passed, transformResult.Usage, evalResult.Usage);
     }
 
-    private AiRun BuildAiRun(Guid questionId, PipelineStage stage, AiUsage usage) => new()
+    private static AiRun BuildAiRun(Guid questionId, PipelineStage stage, AiUsage usage, string providerName) => new()
     {
         QuestionId = questionId,
         Stage = stage,
-        ModelTier = llmProvider.Name == "local-heuristic" ? ModelTier.Cheap : ModelTier.Mid,
+        ModelTier = providerName == "local-heuristic" ? ModelTier.Cheap : ModelTier.Mid,
         Provider = usage.Provider,
         Model = usage.Model,
         InputTokens = usage.InputTokens,
