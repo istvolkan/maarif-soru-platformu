@@ -47,6 +47,13 @@ eşlemesi (`Application/Rubric/TransformationModeMapper`, NoChange/LightEdit'te 
 güncellemesi (Vision'ın `Analyzed`'ı güncellemesiyle aynı desen, ayrı versiyon üretmez) —
 `POST /api/questions/{id}/transform` (`Admin,Editor`), `GET /api/questions/{id}` yanıtı
 dönüşüm/çeldirici/kalite alanlarıyla genişletildi.
+Sprint 9 (§16 Yeni Soru Üretim Modülü): `ILLMProvider.GenerateQuestionAsync` (gerçek Anthropic
+tool-use + anahtar gerektirmeyen mock) — PDF kaynağı olmadan sıfırdan üretilen soru, doğrudan
+bir `Original` `QuestionVersion`/`QuestionDna` olarak kalıcılaştırılır; `AnalysisOrchestrationService`
+`Question.Status`'a bakmadığı için mevcut `/analyze` ve `/transform` pipeline'ları HİÇ
+DEĞİŞTİRİLMEDEN üzerinde çalışır. `Question.BookId` zorunlu olduğundan üretilen sorular
+(Grade,Subject) başına paylaşılan bir placeholder `Book`'a (`SourceType.Generated`) bağlanır —
+`POST /api/questions/generate` (`Admin,Editor`).
 
 ### PDF kütüphanesi seçimi hakkında not
 
@@ -149,3 +156,9 @@ dotnet ef migrations add <İsim> \
 - `TransformationLevel.NoChange`/`LightEdit` hiçbir zaman LLM'e gitmez — soru doğrudan
   `Analyzed → AiApproved` geçer, `Transformed` versiyon/DNA/AiRun kaydı hiç oluşturulmaz
   (boş bir "geçti" versiyonu, hiç LLM çağrısı olmamasına rağmen geçmişi yanıltır).
+- Generate mock'u (`Ai:Provider=Local`) gerçek pedagojik üretim YAPMAZ: soru
+  `[MOCK-GENERATE] {Theme} — {Context}` biçiminde döner, 4 sabit şık + saplama çeldiriciler
+  üretilir. Gerçek üretim için `Ai:Provider=Anthropic` gerekir.
+- Üretilen sorular `Question.Status` alanında PDF'ten çıkarılmışlardan ayırt edilmez (ikisi de
+  `Extracted` ile başlar — yeni bir enum değeri icat edilmedi). Ayrım gerekirse
+  `Book.SourceType==Generated` veya `QuestionVersion.CreatedBy==<provider adı>` kullanılmalı.

@@ -20,6 +20,7 @@ public class AnthropicLLMProvider : ILLMProvider
     private const string ToolName = "submit_analysis";
     private const string TransformToolName = "submit_transformation";
     private const string EvaluateToolName = "submit_evaluation";
+    private const string GenerateToolName = "submit_generation";
 
     private readonly AnthropicOptions _options;
     private readonly AnthropicClient _client;
@@ -126,8 +127,31 @@ public class AnthropicLLMProvider : ILLMProvider
         return ParseEvaluateResult(toolUse.Input, usage);
     }
 
-    public Task<GenerateQuestionResult> GenerateQuestionAsync(GenerateQuestionRequest request, CancellationToken ct = default)
-        => throw new NotImplementedException("Soru üretimi ileriki bir sprintte eklenecek.");
+    public async Task<GenerateQuestionResult> GenerateQuestionAsync(GenerateQuestionRequest request, CancellationToken ct = default)
+    {
+        var parameters = new MessageCreateParams
+        {
+            Model = _options.Model,
+            MaxTokens = _options.MaxTokens,
+            System = BuildGenerateSystemPrompt(request),
+            Tools = [BuildGenerationTool()],
+            ToolChoice = new ToolChoiceTool { Name = GenerateToolName },
+            Messages = [new() { Role = Role.User, Content = BuildGenerateUserContent(request) }],
+        };
+
+        var stopwatch = Stopwatch.StartNew();
+        var response = await _client.Messages.Create(parameters, ct);
+        stopwatch.Stop();
+
+        var toolUse = response.Content
+            .Select(b => b.Value)
+            .OfType<ToolUseBlock>()
+            .FirstOrDefault(b => b.Name == GenerateToolName)
+            ?? throw new InvalidOperationException("Anthropic yanıtında beklenen submit_generation tool_use bloğu bulunamadı.");
+
+        var usage = BuildUsage(response, stopwatch);
+        return ParseGenerateResult(toolUse.Input, usage);
+    }
 
     private AiUsage BuildUsage(Message response, Stopwatch stopwatch)
     {
@@ -296,22 +320,7 @@ public class AnthropicLLMProvider : ILLMProvider
             }),
             ["correct_answer"] = Schema("string", "Doğru şıkkın metni (new_options içindeki değerlerden biri)."),
             ["solution"] = Schema("string", "Adım adım çözüm."),
-            ["distractors"] = JsonSerializer.SerializeToElement(new
-            {
-                type = "array",
-                description = "Doğru şık HARİÇ her şık için bir çeldirici kaydı (bkz. §15).",
-                items = new
-                {
-                    type = "object",
-                    properties = new
-                    {
-                        option_label = new { type = "string", description = "Örn. B, C, D." },
-                        misconception_code = new { type = "string", description = "Bu çeldiricinin işaret ettiği öğrenci hata tipi; emin değilsen döndürme." },
-                        explanation = new { type = "string" }
-                    },
-                    required = new[] { "option_label" }
-                }
-            })
+            ["distractors"] = BuildDistractorsSchema()
         };
 
         return new Tool
@@ -420,6 +429,109 @@ public class AnthropicLLMProvider : ILLMProvider
             ÇÖZÜM:
             {request.Solution}
             """;
+    }
+
+    private static JsonElement BuildDistractorsSchema() => JsonSerializer.SerializeToElement(new
+    {
+        type = "array",
+        description = "Doğru şık HARİÇ her şık için bir çeldirici kaydı (bkz. §15).",
+        items = new
+        {
+            type = "object",
+            properties = new
+            {
+                option_label = new { type = "string", description = "Örn. B, C, D." },
+                misconception_code = new { type = "string", description = "Bu çeldiricinin işaret ettiği öğrenci hata tipi; emin değilsen döndürme." },
+                explanation = new { type = "string" }
+            },
+            required = new[] { "option_label" }
+        }
+    });
+
+    private static Tool BuildGenerationTool()
+    {
+        var properties = new Dictionary<string, JsonElement>
+        {
+            ["question"] = Schema("string", "Üretilen soru metni."),
+            ["options"] = JsonSerializer.SerializeToElement(new
+            {
+                type = "array",
+                description = "3-6 şık.",
+                items = new { type = "string" },
+                minItems = 3,
+                maxItems = 6
+            }),
+            ["correct_answer"] = Schema("string", "Doğru şıkkın metni (options içindeki değerlerden biri)."),
+            ["solution"] = Schema("string", "Adım adım çözüm."),
+            ["distractors"] = BuildDistractorsSchema()
+        };
+
+        return new Tool
+        {
+            Name = GenerateToolName,
+            Description = "Üretilen sorunun yapılandırılmış sonucunu bildir.",
+            InputSchema = new()
+            {
+                Properties = properties,
+                Required = ["question", "options", "correct_answer", "solution", "distractors"]
+            }
+        };
+    }
+
+    private static string BuildGenerateSystemPrompt(GenerateQuestionRequest request) => $"""
+        Sen Türkiye Yüzyılı Maarif Modeli'ne göre sıfırdan matematik sorusu üreten bir uzmansın.
+
+        HEDEF:
+        - Sınıf: {request.Grade}, Ders: {request.Subject}
+        - Tema: {request.Theme}
+        - Kazanım kodu: {request.LearningOutcomeCode}
+        - Zorluk: {request.Difficulty}
+        - Soru tipi: {request.QuestionType}
+        - Muhakeme tipi: {request.ReasoningType}
+
+        KURALLAR:
+        1. Yalnızca aşağıdaki [KAYNAK n] bloklarına dayanarak kazanım/olgu iddiası üret.
+           Kaynakta olmayan bir MEB kazanımını ASLA uydurma.
+        2. Sorunun matematiksel olarak doğru ve tek bir doğru cevabı olmasına dikkat et.
+        3. Her yanlış şık için bir çeldirici kaydı ver; mümkünse bir öğrenci hata tipini
+           (misconception_code) belirt, emin değilsen boş bırak — uydurma.
+        4. Cevabını YALNIZCA submit_generation aracını çağırarak ver.
+
+        {BuildGroundingBlock(request.Grounding)}
+        """;
+
+    private static string BuildGenerateUserContent(GenerateQuestionRequest request) => $"""
+        BAĞLAM/SENARYO İSTEĞİ:
+        {request.Context}
+        """;
+
+    private static GenerateQuestionResult ParseGenerateResult(IReadOnlyDictionary<string, JsonElement> input, AiUsage usage)
+    {
+        var options = input.TryGetValue("options", out var optionsEl) && optionsEl.ValueKind == JsonValueKind.Array
+            ? optionsEl.EnumerateArray().Select(o => o.GetString() ?? "").ToList()
+            : new List<string>();
+
+        var distractors = new List<DistractorDto>();
+        if (input.TryGetValue("distractors", out var distractorsEl) && distractorsEl.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in distractorsEl.EnumerateArray())
+            {
+                var optionLabel = item.TryGetProperty("option_label", out var ol) ? ol.GetString() ?? "" : "";
+                var misconceptionCode = item.TryGetProperty("misconception_code", out var mc) && mc.ValueKind == JsonValueKind.String
+                    ? mc.GetString() : null;
+                var explanation = item.TryGetProperty("explanation", out var ex) && ex.ValueKind == JsonValueKind.String
+                    ? ex.GetString() : null;
+                distractors.Add(new DistractorDto(optionLabel, misconceptionCode, explanation));
+            }
+        }
+
+        return new GenerateQuestionResult(
+            Question: input.TryGetValue("question", out var q) ? q.GetString() ?? "" : "",
+            Options: options,
+            CorrectAnswer: input.TryGetValue("correct_answer", out var ca) ? ca.GetString() ?? "" : "",
+            Solution: input.TryGetValue("solution", out var sol) ? sol.GetString() ?? "" : "",
+            Distractors: distractors,
+            Usage: usage);
     }
 
     private static string BuildGroundingBlock(IReadOnlyList<GroundingReference> grounding) =>

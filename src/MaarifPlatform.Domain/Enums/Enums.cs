@@ -62,7 +62,8 @@ public enum DifficultyLevel
 public enum SourceType
 {
     LegacyBook,
-    MebReference
+    MebReference,
+    Generated
 }
 
 public enum ActorType

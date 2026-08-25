@@ -106,7 +106,25 @@ public class LocalHeuristicLLMProvider : ILLMProvider
     }
 
     public Task<GenerateQuestionResult> GenerateQuestionAsync(GenerateQuestionRequest request, CancellationToken ct = default)
-        => throw new NotImplementedException("Soru üretimi ileriki bir sprintte eklenecek.");
+    {
+        var options = new List<string> { "A seçeneği", "B seçeneği", "C seçeneği", "D seçeneği" };
+        var distractors = new List<DistractorDto>
+        {
+            new("B", null, "[MOCK] Gerçek çeldirici analizi yapılmadı."),
+            new("C", null, "[MOCK] Gerçek çeldirici analizi yapılmadı."),
+            new("D", null, "[MOCK] Gerçek çeldirici analizi yapılmadı.")
+        };
+
+        var result = new GenerateQuestionResult(
+            Question: $"[MOCK-GENERATE] {request.Theme} — {request.Context}",
+            Options: options,
+            CorrectAnswer: options[0],
+            Solution: "[MOCK] Gerçek çözüm üretilmedi.",
+            Distractors: distractors,
+            Usage: new AiUsage("local-heuristic", "mock-v1", EstimateTokens(request), 120, 0m, 5));
+
+        return Task.FromResult(result);
+    }
 
     private static string Truncate(string text, int maxLength) =>
         text.Length <= maxLength ? text : text[..maxLength] + "...";
@@ -118,4 +136,7 @@ public class LocalHeuristicLLMProvider : ILLMProvider
 
     private static int EstimateTokens(EvaluateQuestionRequest request) =>
         (request.TransformedQuestion.Length + request.Options.Sum(o => o.Length)) / 4;
+
+    private static int EstimateTokens(GenerateQuestionRequest request) =>
+        (request.Theme.Length + request.Context.Length) / 4;
 }

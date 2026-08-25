@@ -77,4 +77,19 @@ public class LocalHeuristicLLMProviderTests
 
         Assert.True(withoutExtras.QualityScore < withExtras.QualityScore);
     }
+
+    [Fact]
+    public async Task GenerateQuestionAsync_ReturnsFourOptionsWithThemeContext()
+    {
+        var request = new GenerateQuestionRequest(
+            9, "Matematik", "EBOB/EKOK", "M.9.1.3.2", "Medium", "ÇoktanSeçmeli", "Bahçe sulama senaryosu", "AkilYurutme", []);
+
+        var result = await _sut.GenerateQuestionAsync(request);
+
+        Assert.Contains("EBOB/EKOK", result.Question);
+        Assert.Contains("Bahçe sulama senaryosu", result.Question);
+        Assert.Equal(4, result.Options.Count);
+        Assert.Equal(3, result.Distractors.Count);
+        Assert.Contains(result.CorrectAnswer, result.Options);
+    }
 }

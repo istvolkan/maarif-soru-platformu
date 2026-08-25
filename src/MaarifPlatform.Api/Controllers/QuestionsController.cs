@@ -1,5 +1,6 @@
 using System.Text.Json;
 using MaarifPlatform.Api.Dtos;
+using MaarifPlatform.Application.Providers;
 using MaarifPlatform.Domain.Enums;
 using MaarifPlatform.Infrastructure.Analysis;
 using MaarifPlatform.Infrastructure.Persistence;
@@ -14,9 +15,27 @@ namespace MaarifPlatform.Api.Controllers;
 [Route("api/questions")]
 [Authorize]
 public class QuestionsController(
-    MaarifDbContext db, AnalysisOrchestrationService analysisService, TransformationOrchestrationService transformationService)
+    MaarifDbContext db, AnalysisOrchestrationService analysisService,
+    TransformationOrchestrationService transformationService, GenerationOrchestrationService generationService)
     : ControllerBase
 {
+    [HttpPost("generate")]
+    [Authorize(Roles = "Admin,Editor")]
+    public async Task<ActionResult<GenerateQuestionResponse>> Generate(GenerateQuestionApiRequest request, CancellationToken ct)
+    {
+        if (!Enum.TryParse<DifficultyLevel>(request.Difficulty, ignoreCase: true, out _))
+        {
+            return BadRequest($"Geçersiz zorluk: {request.Difficulty}. Geçerli değerler: {string.Join(", ", Enum.GetNames<DifficultyLevel>())}");
+        }
+
+        var result = await generationService.GenerateAsync(new GenerateQuestionRequest(
+            request.Grade, request.Subject, request.Theme, request.LearningOutcomeCode,
+            request.Difficulty, request.QuestionType, request.Context, request.ReasoningType, []), ct);
+
+        return CreatedAtAction(nameof(GetById), new { id = result.QuestionId },
+            new GenerateQuestionResponse(result.QuestionId, result.Usage.Provider, result.Usage.Model, result.Usage.CostUsd));
+    }
+
     [HttpPost("{id:guid}/analyze")]
     [Authorize(Roles = "Admin,Editor")]
     public async Task<ActionResult<AnalysisSummaryResponse>> Analyze(Guid id, CancellationToken ct)

@@ -79,6 +79,7 @@ else
 
 builder.Services.AddScoped<AnalysisOrchestrationService>();
 builder.Services.AddScoped<TransformationOrchestrationService>();
+builder.Services.AddScoped<GenerationOrchestrationService>();
 
 // §3/§7/§10 Vision mimarisi. Vision:Provider (birincil) varsayılanı "Local" — dış API anahtarı
 // gerektirmez, yalnızca boru mekaniğini doğrulamak içindir (bkz. LocalMockVisionProvider'daki
