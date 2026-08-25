@@ -7,39 +7,36 @@
 @inject NavigationManager NavigationManager
 
 <PageTitle>Yeni Soru Üret</PageTitle>
-<h1>Yeni Soru Üret</h1>
-<p>PDF kaynağı olmadan, sıfırdan bir soru üretir — RAG ile ilgili Sınıf/Ders için ingest edilmiş referans dokümanı varsa üretim ona dayanır.</p>
+<h1 class="page-title">Yeni Soru Üret</h1>
+<p class="page-intro">PDF kaynağı olmadan, sıfırdan bir soru üretir — RAG ile ilgili Sınıf/Ders için ingest edilmiş referans dokümanı varsa üretim ona dayanır.</p>
 
 @if (_error is not null)
 {
     <p class="error">@_error</p>
 }
 
-<EditForm Model="_form" OnValidSubmit="GenerateAsync">
-    <DataAnnotationsValidator />
-    <div class="field"><label>Sınıf</label><InputNumber @bind-Value="_form.Grade" /></div>
-    <div class="field"><label>Ders</label><InputText @bind-Value="_form.Subject" /></div>
-    <div class="field"><label>Tema</label><InputText @bind-Value="_form.Theme" /></div>
-    <div class="field"><label>Kazanım Kodu</label><InputText @bind-Value="_form.LearningOutcomeCode" /></div>
-    <div class="field">
-        <label>Zorluk</label>
-        <InputSelect @bind-Value="_form.Difficulty">
-            @foreach (var level in Enum.GetNames<DifficultyLevel>())
-            {
-                <option value="@level">@level</option>
-            }
-        </InputSelect>
-    </div>
-    <div class="field"><label>Soru Tipi</label><InputText @bind-Value="_form.QuestionType" placeholder="örn. ÇoktanSeçmeli" /></div>
-    <div class="field"><label>Bağlam/Senaryo</label><InputTextArea @bind-Value="_form.Context" rows="3" /></div>
-    <div class="field"><label>Muhakeme Tipi</label><InputText @bind-Value="_form.ReasoningType" placeholder="örn. AkılYürütme" /></div>
-    <button type="submit" disabled="@_busy">@(_busy ? "Üretiliyor..." : "Üret")</button>
-</EditForm>
-
-<style>
-    .field { margin-bottom: 0.75rem; display: flex; flex-direction: column; gap: 0.25rem; max-width: 500px; }
-    .error { color: #b00020; }
-</style>
+<div class="card">
+    <EditForm Model="_form" OnValidSubmit="GenerateAsync">
+        <DataAnnotationsValidator />
+        <div class="field"><label>Sınıf</label><InputNumber @bind-Value="_form.Grade" /></div>
+        <div class="field"><label>Ders</label><InputText @bind-Value="_form.Subject" /></div>
+        <div class="field"><label>Tema</label><InputText @bind-Value="_form.Theme" /></div>
+        <div class="field"><label>Kazanım Kodu</label><InputText @bind-Value="_form.LearningOutcomeCode" /></div>
+        <div class="field">
+            <label>Zorluk</label>
+            <InputSelect @bind-Value="_form.Difficulty">
+                @foreach (var level in Enum.GetNames<DifficultyLevel>())
+                {
+                    <option value="@level">@level</option>
+                }
+            </InputSelect>
+        </div>
+        <div class="field"><label>Soru Tipi</label><InputText @bind-Value="_form.QuestionType" placeholder="örn. ÇoktanSeçmeli" /></div>
+        <div class="field"><label>Bağlam/Senaryo</label><InputTextArea @bind-Value="_form.Context" rows="3" /></div>
+        <div class="field"><label>Muhakeme Tipi</label><InputText @bind-Value="_form.ReasoningType" placeholder="örn. AkılYürütme" /></div>
+        <button type="submit" disabled="@_busy">@(_busy ? "Üretiliyor..." : "Üret")</button>
+    </EditForm>
+</div>
 
 @code {
     private GenerateForm _form = new();

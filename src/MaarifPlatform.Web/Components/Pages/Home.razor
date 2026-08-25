@@ -4,16 +4,39 @@
 
 <PageTitle>Maarif Platform</PageTitle>
 
-<h1>Maarif Soru Dönüşüm Platformu</h1>
+<div class="hero">
+    <h1>Maarif Soru Dönüşüm Platformu</h1>
 
-<AuthorizeView>
-    <Authorized>
-        <p>Hoş geldiniz, @context.User.Identity?.Name.</p>
-        <AuthorizeView Roles="Admin" Context="adminContext">
-            <p>Sol menüden kitap yükleyip soruları çıkarabilir, kullanıcı ve API anahtarı ayarlarını yönetebilirsiniz.</p>
-        </AuthorizeView>
-        <AuthorizeView Roles="Admin,Editor" Context="editorContext">
-            <p><a href="questions/generate">Yeni bir soru üretmek</a> için tıklayın, ya da kitap listesinden bir kitabın sorularına gidin.</p>
-        </AuthorizeView>
-    </Authorized>
-</AuthorizeView>
+    <AuthorizeView>
+        <Authorized>
+            <p class="welcome">Hoş geldiniz, <strong>@context.User.Identity?.Name</strong>.</p>
+            <AuthorizeView Roles="Admin" Context="adminContext">
+                <p>Sol menüden kitap yükleyip soruları çıkarabilir, kullanıcı ve API anahtarı ayarlarını yönetebilirsiniz.</p>
+            </AuthorizeView>
+            <AuthorizeView Roles="Admin,Editor" Context="editorContext">
+                <p><a href="questions/generate">Yeni bir soru üretmek</a> için tıklayın, ya da kitap listesinden bir kitabın sorularına gidin.</p>
+            </AuthorizeView>
+        </Authorized>
+    </AuthorizeView>
+</div>
+
+<style>
+    .hero {
+        background: var(--z-card);
+        border: 1px solid var(--z-border);
+        border-radius: var(--z-radius);
+        box-shadow: var(--z-shadow);
+        padding: 2rem 2.25rem;
+        max-width: 720px;
+    }
+
+    .hero h1 {
+        margin-top: 0;
+        border-left: 5px solid var(--z-red);
+        padding-left: 0.75rem;
+    }
+
+    .welcome {
+        color: var(--z-muted);
+    }
+</style>

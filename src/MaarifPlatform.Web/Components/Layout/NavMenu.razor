@@ -1,37 +1,149 @@
-<div class="nav">
-    <div class="nav-brand">Maarif Platform</div>
-    <nav>
-        <NavLink href="" Match="NavLinkMatch.All">Ana Sayfa</NavLink>
+<div class="topbar">
+    <div class="topbar-inner">
+        <div class="nav-brand">
+            <span class="brand-mark">Z</span>
+            <span class="brand-text">Maarif <strong>Platform</strong></span>
+        </div>
 
-        <AuthorizeView Roles="Admin,Editor">
-            <NavLink href="questions/generate">Soru Üret</NavLink>
+        <nav>
+            <NavLink href="" Match="NavLinkMatch.All">Ana Sayfa</NavLink>
+
+            <AuthorizeView Roles="Admin,Editor">
+                <NavLink href="questions/generate">Soru Üret</NavLink>
+            </AuthorizeView>
+
+            <AuthorizeView Roles="Admin">
+                <span class="nav-sep"></span>
+                <NavLink href="admin/books">Kitaplar</NavLink>
+                <NavLink href="admin/reference-documents">Referans Dokümanları</NavLink>
+                <NavLink href="admin/users">Kullanıcılar</NavLink>
+                <NavLink href="admin/settings">Ayarlar</NavLink>
+            </AuthorizeView>
+        </nav>
+
+        <AuthorizeView>
+            <Authorized>
+                <div class="nav-user">
+                    <span class="user-chip">
+                        @context.User.Identity?.Name
+                        <em>@context.User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value</em>
+                    </span>
+                    <form method="post" action="/logout">
+                        <button type="submit" class="logout-btn">Çıkış</button>
+                    </form>
+                </div>
+            </Authorized>
         </AuthorizeView>
-
-        <AuthorizeView Roles="Admin">
-            <p class="nav-section">Yönetim</p>
-            <NavLink href="admin/books">Kitaplar</NavLink>
-            <NavLink href="admin/reference-documents">Referans Dokümanları</NavLink>
-            <NavLink href="admin/users">Kullanıcılar</NavLink>
-            <NavLink href="admin/settings">Ayarlar</NavLink>
-        </AuthorizeView>
-    </nav>
-
-    <AuthorizeView>
-        <Authorized>
-            <div class="nav-user">
-                <span>@context.User.Identity?.Name (@context.User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value)</span>
-                <form method="post" action="/logout">
-                    <button type="submit">Çıkış</button>
-                </form>
-            </div>
-        </Authorized>
-    </AuthorizeView>
+    </div>
 </div>
 
 <style>
-    .nav { display: flex; flex-direction: column; padding: 1rem; border-bottom: 1px solid #ddd; font-family: sans-serif; }
-    .nav-brand { font-weight: 700; margin-bottom: 0.5rem; }
-    .nav nav { display: flex; gap: 1rem; flex-wrap: wrap; align-items: center; }
-    .nav-section { margin: 0 0 0 1rem; font-size: 0.8rem; color: #666; }
-    .nav-user { margin-top: 0.5rem; display: flex; gap: 0.75rem; align-items: center; font-size: 0.9rem; }
+    .topbar {
+        background: var(--z-black);
+        border-bottom: 3px solid var(--z-red);
+    }
+
+    .topbar-inner {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 0.65rem 1.5rem;
+        display: flex;
+        align-items: center;
+        gap: 1.75rem;
+        flex-wrap: wrap;
+    }
+
+    .nav-brand {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        color: #fff;
+        font-size: 1rem;
+        white-space: nowrap;
+    }
+
+    .brand-mark {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 1.9rem;
+        height: 1.9rem;
+        border-radius: 6px;
+        background: var(--z-red);
+        color: #fff;
+        font-weight: 800;
+        font-size: 1.05rem;
+    }
+
+    .brand-text strong {
+        font-weight: 800;
+    }
+
+    .topbar nav {
+        display: flex;
+        gap: 0.25rem;
+        flex-wrap: wrap;
+        align-items: center;
+        flex: 1;
+    }
+
+        .topbar nav a {
+            color: #d8d8d8;
+            font-weight: 600;
+            font-size: 0.88rem;
+            padding: 0.45rem 0.75rem;
+            border-radius: 6px;
+            text-decoration: none;
+            transition: background-color 0.15s ease, color 0.15s ease;
+        }
+
+            .topbar nav a:hover {
+                background: rgba(255, 255, 255, 0.08);
+                color: #fff;
+            }
+
+            .topbar nav a.active {
+                background: var(--z-red);
+                color: #fff;
+            }
+
+    .nav-sep {
+        width: 1px;
+        height: 1.4rem;
+        background: rgba(255, 255, 255, 0.18);
+        margin: 0 0.25rem;
+    }
+
+    .nav-user {
+        display: flex;
+        align-items: center;
+        gap: 0.65rem;
+    }
+
+    .user-chip {
+        color: #eaeaea;
+        font-size: 0.82rem;
+        white-space: nowrap;
+    }
+
+        .user-chip em {
+            font-style: normal;
+            color: var(--z-red);
+            font-weight: 700;
+            margin-left: 0.3rem;
+        }
+
+    .logout-btn {
+        background: transparent;
+        color: #eaeaea;
+        border: 1px solid rgba(255, 255, 255, 0.3);
+        padding: 0.35rem 0.8rem;
+        font-size: 0.82rem;
+    }
+
+        .logout-btn:hover {
+            background: var(--z-red);
+            border-color: var(--z-red);
+            color: #fff;
+        }
 </style>

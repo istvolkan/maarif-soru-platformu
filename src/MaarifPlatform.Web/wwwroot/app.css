@@ -1,17 +1,186 @@
+:root {
+    --z-red: #e30613;
+    --z-red-dark: #cc2127;
+    --z-red-darker: #a3050f;
+    --z-black: #141414;
+    --z-ink: #1a1a1a;
+    --z-muted: #6b6b6b;
+    --z-border: #e2e2e2;
+    --z-bg: #f4f4f4;
+    --z-card: #ffffff;
+    --z-success: #1b8a3d;
+    --z-success-bg: #e6f4ea;
+    --z-danger: #c62828;
+    --z-danger-bg: #fdecea;
+    --z-warn-bg: #fff4e5;
+    --z-radius: 8px;
+    --z-shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+* {
+    box-sizing: border-box;
+}
+
+html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--z-bg);
+    color: var(--z-ink);
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, h4 {
+    font-weight: 700;
+    color: var(--z-black);
+    line-height: 1.25;
+}
+
 h1:focus {
     outline: none;
 }
 
+a {
+    color: var(--z-red);
+    text-decoration: none;
+}
+
+    a:hover {
+        color: var(--z-red-dark);
+        text-decoration: underline;
+    }
+
+p {
+    color: var(--z-ink);
+    line-height: 1.5;
+}
+
+/* Buttons */
+button, .btn {
+    font-family: inherit;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #fff;
+    background: var(--z-red);
+    border: 1px solid var(--z-red);
+    border-radius: var(--z-radius);
+    padding: 0.55rem 1.1rem;
+    cursor: pointer;
+    transition: background-color 0.15s ease, border-color 0.15s ease, transform 0.05s ease;
+}
+
+    button:hover:not(:disabled), .btn:hover:not(:disabled) {
+        background: var(--z-red-dark);
+        border-color: var(--z-red-dark);
+    }
+
+    button:active:not(:disabled) {
+        transform: translateY(1px);
+    }
+
+    button:disabled {
+        background: #c9c9c9;
+        border-color: #c9c9c9;
+        cursor: not-allowed;
+    }
+
+button.secondary, .btn-secondary {
+    background: #fff;
+    color: var(--z-ink);
+    border: 1px solid #ccc;
+}
+
+    button.secondary:hover:not(:disabled), .btn-secondary:hover:not(:disabled) {
+        background: #f2f2f2;
+        border-color: #b5b5b5;
+    }
+
+/* Form fields */
+input[type=text], input[type=password], input[type=email], input[type=number],
+input:not([type]), select, textarea {
+    font-family: inherit;
+    font-size: 0.95rem;
+    color: var(--z-ink);
+    background: #fff;
+    border: 1px solid #c9c9c9;
+    border-radius: var(--z-radius);
+    padding: 0.5rem 0.65rem;
+    width: 100%;
+    max-width: 420px;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+    input:focus, select:focus, textarea:focus {
+        outline: none;
+        border-color: var(--z-red);
+        box-shadow: 0 0 0 3px rgba(227, 6, 19, 0.15);
+    }
+
+label {
+    font-weight: 600;
+    font-size: 0.85rem;
+    color: var(--z-black);
+}
+
+/* Tables */
+table {
+    border-collapse: collapse;
+    width: 100%;
+    background: var(--z-card);
+    border-radius: var(--z-radius);
+    overflow: hidden;
+    box-shadow: var(--z-shadow);
+}
+
+th {
+    background: var(--z-black);
+    color: #fff;
+    text-align: left;
+    padding: 0.6rem 0.9rem;
+    font-size: 0.85rem;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+}
+
+td {
+    padding: 0.55rem 0.9rem;
+    border-bottom: 1px solid var(--z-border);
+    font-size: 0.92rem;
+}
+
+tr:last-child td {
+    border-bottom: none;
+}
+
+tbody tr:hover {
+    background: #fafafa;
+}
+
+/* Status / message helpers shared across pages */
+.error, .validation-message {
+    color: var(--z-danger);
+    background: var(--z-danger-bg);
+    border: 1px solid rgba(198, 40, 40, 0.25);
+    border-radius: var(--z-radius);
+    padding: 0.6rem 0.9rem;
+    font-weight: 600;
+}
+
+.ok {
+    color: var(--z-success);
+    background: var(--z-success-bg);
+    border: 1px solid rgba(27, 138, 61, 0.25);
+    border-radius: var(--z-radius);
+    padding: 0.6rem 0.9rem;
+    font-weight: 600;
+}
+
 .valid.modified:not([type=checkbox]) {
-    outline: 1px solid #26b050;
+    border-color: var(--z-success) !important;
 }
 
 .invalid {
-    outline: 1px solid #e50000;
-}
-
-.validation-message {
-    color: #e50000;
+    border-color: var(--z-danger) !important;
 }
 
 .blazor-error-boundary {
@@ -26,4 +195,65 @@ h1:focus {
 
 .darker-border-checkbox.form-check-input {
     border-color: #929292;
+}
+
+/* Shared page/component utilities */
+.page-title {
+    border-left: 5px solid var(--z-red);
+    padding-left: 0.75rem;
+    margin-top: 0;
+}
+
+.page-intro {
+    color: var(--z-muted);
+    max-width: 720px;
+    margin-top: -0.5rem;
+}
+
+.card {
+    background: var(--z-card);
+    border: 1px solid var(--z-border);
+    border-radius: var(--z-radius);
+    box-shadow: var(--z-shadow);
+    padding: 1.5rem 1.75rem;
+    margin-bottom: 1.5rem;
+}
+
+.field {
+    margin-bottom: 0.85rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    max-width: 420px;
+}
+
+.actions {
+    display: flex;
+    gap: 0.6rem;
+    margin: 1rem 0;
+}
+
+.status {
+    display: inline-block;
+    padding: 0.15rem 0.6rem;
+    border-radius: 999px;
+    font-size: 0.78rem;
+    font-weight: 700;
+    background: #ececec;
+    color: #444;
+}
+
+.status-aiapproved, .status-editorapproved, .status-published {
+    background: var(--z-success-bg);
+    color: var(--z-success);
+}
+
+.status-manualreviewrequired, .status-rejected {
+    background: var(--z-danger-bg);
+    color: var(--z-danger);
+}
+
+.status-extracted {
+    background: var(--z-warn-bg);
+    color: #a35a00;
 }

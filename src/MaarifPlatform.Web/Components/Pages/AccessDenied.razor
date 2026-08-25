@@ -3,6 +3,22 @@
 
 <PageTitle>Erişim Engellendi</PageTitle>
 
-<h1>Erişim Engellendi</h1>
-<p>Bu sayfayı görüntülemek için yetkiniz yok.</p>
-<p><a href="/">Ana sayfaya dön</a></p>
+<div class="denied-box">
+    <h1>Erişim Engellendi</h1>
+    <p>Bu sayfayı görüntülemek için yetkiniz yok.</p>
+    <p><a href="/">Ana sayfaya dön</a></p>
+</div>
+
+<style>
+    .denied-box {
+        max-width: 480px;
+        margin: 4rem auto;
+        text-align: center;
+        background: var(--z-card);
+        border: 1px solid var(--z-border);
+        border-top: 4px solid var(--z-red);
+        border-radius: var(--z-radius);
+        box-shadow: var(--z-shadow);
+        padding: 2.5rem 2.25rem;
+    }
+</style>

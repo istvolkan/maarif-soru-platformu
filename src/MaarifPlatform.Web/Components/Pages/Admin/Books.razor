@@ -9,25 +9,25 @@
 @inject IServiceScopeFactory ScopeFactory
 
 <PageTitle>Kitaplar</PageTitle>
-<h1>Kitaplar</h1>
-<p>Maarif model ders kitaplarını buradan yükleyin — yükledikten sonra "Soruları Çıkar" ile PDF'ten soru bloklarını çıkarabilirsiniz.</p>
+<h1 class="page-title">Kitaplar</h1>
+<p class="page-intro">Maarif model ders kitaplarını buradan yükleyin — yükledikten sonra "Soruları Çıkar" ile PDF'ten soru bloklarını çıkarabilirsiniz.</p>
 
 @if (_error is not null)
 {
     <p class="error">@_error</p>
 }
 
-<EditForm Model="_form" OnValidSubmit="UploadAsync">
-    <DataAnnotationsValidator />
-    <div class="field"><label>Başlık</label><InputText @bind-Value="_form.Title" /></div>
-    <div class="field"><label>Sınıf</label><InputNumber @bind-Value="_form.Grade" /></div>
-    <div class="field"><label>Ders</label><InputText @bind-Value="_form.Subject" /></div>
-    <div class="field"><label>Yayınevi</label><InputText @bind-Value="_form.Publisher" /></div>
-    <div class="field"><label>PDF Dosyası</label><InputFile OnChange="OnFileSelected" accept=".pdf" /></div>
-    <button type="submit" disabled="@(_selectedFile is null || _uploading)">@(_uploading ? "Yükleniyor..." : "Yükle")</button>
-</EditForm>
-
-<hr />
+<div class="card">
+    <EditForm Model="_form" OnValidSubmit="UploadAsync">
+        <DataAnnotationsValidator />
+        <div class="field"><label>Başlık</label><InputText @bind-Value="_form.Title" /></div>
+        <div class="field"><label>Sınıf</label><InputNumber @bind-Value="_form.Grade" /></div>
+        <div class="field"><label>Ders</label><InputText @bind-Value="_form.Subject" /></div>
+        <div class="field"><label>Yayınevi</label><InputText @bind-Value="_form.Publisher" /></div>
+        <div class="field"><label>PDF Dosyası</label><InputFile OnChange="OnFileSelected" accept=".pdf" /></div>
+        <button type="submit" disabled="@(_selectedFile is null || _uploading)">@(_uploading ? "Yükleniyor..." : "Yükle")</button>
+    </EditForm>
+</div>
 
 @if (_books is null)
 {
@@ -60,13 +60,6 @@ else
         </tbody>
     </table>
 }
-
-<style>
-    .field { margin-bottom: 0.75rem; display: flex; flex-direction: column; gap: 0.25rem; max-width: 400px; }
-    .error { color: #b00020; }
-    table { border-collapse: collapse; width: 100%; margin-top: 1rem; }
-    th, td { border: 1px solid #ddd; padding: 0.4rem 0.6rem; text-align: left; }
-</style>
 
 @code {
     private BookForm _form = new();

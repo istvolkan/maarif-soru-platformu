@@ -7,31 +7,31 @@
 @inject IServiceScopeFactory ScopeFactory
 
 <PageTitle>Kullanıcılar</PageTitle>
-<h1>Kullanıcılar</h1>
+<h1 class="page-title">Kullanıcılar</h1>
 
 @if (_error is not null)
 {
     <p class="error">@_error</p>
 }
 
-<EditForm Model="_form" OnValidSubmit="CreateAsync">
-    <DataAnnotationsValidator />
-    <div class="field"><label>Ad Soyad</label><InputText @bind-Value="_form.Name" /></div>
-    <div class="field"><label>E-posta</label><InputText @bind-Value="_form.Email" /></div>
-    <div class="field"><label>Parola</label><InputText @bind-Value="_form.Password" type="password" /></div>
-    <div class="field">
-        <label>Rol</label>
-        <InputSelect @bind-Value="_form.Role">
-            @foreach (var role in Enum.GetNames<UserRole>())
-            {
-                <option value="@role">@role</option>
-            }
-        </InputSelect>
-    </div>
-    <button type="submit">Kullanıcı Oluştur</button>
-</EditForm>
-
-<hr />
+<div class="card">
+    <EditForm Model="_form" OnValidSubmit="CreateAsync">
+        <DataAnnotationsValidator />
+        <div class="field"><label>Ad Soyad</label><InputText @bind-Value="_form.Name" /></div>
+        <div class="field"><label>E-posta</label><InputText @bind-Value="_form.Email" /></div>
+        <div class="field"><label>Parola</label><InputText @bind-Value="_form.Password" type="password" /></div>
+        <div class="field">
+            <label>Rol</label>
+            <InputSelect @bind-Value="_form.Role">
+                @foreach (var role in Enum.GetNames<UserRole>())
+                {
+                    <option value="@role">@role</option>
+                }
+            </InputSelect>
+        </div>
+        <button type="submit">Kullanıcı Oluştur</button>
+    </EditForm>
+</div>
 
 @if (_users is null)
 {
@@ -54,13 +54,6 @@ else
         </tbody>
     </table>
 }
-
-<style>
-    .field { margin-bottom: 0.75rem; display: flex; flex-direction: column; gap: 0.25rem; max-width: 400px; }
-    .error { color: #b00020; }
-    table { border-collapse: collapse; width: 100%; margin-top: 1rem; }
-    th, td { border: 1px solid #ddd; padding: 0.4rem 0.6rem; text-align: left; }
-</style>
 
 @code {
     private UserForm _form = new();

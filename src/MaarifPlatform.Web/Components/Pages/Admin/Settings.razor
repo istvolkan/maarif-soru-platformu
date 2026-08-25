@@ -8,8 +8,8 @@
 @inject AuthenticationStateProvider AuthState
 
 <PageTitle>Ayarlar</PageTitle>
-<h1>Ayarlar — Sağlayıcılar ve API Anahtarları</h1>
-<p>
+<h1 class="page-title">Ayarlar — Sağlayıcılar ve API Anahtarları</h1>
+<p class="page-intro">
     Buradaki değişiklikler <code>appsettings.json</code>'daki varsayılanların ÜZERİNE yazılır ve
     uygulama yeniden başlatılmadan hemen etkili olur. API anahtarı alanları boş bırakılırsa
     mevcut kayıtlı değer korunur — yalnızca değiştirmek istediğiniz anahtarı doldurun.
@@ -99,12 +99,25 @@
 </EditForm>
 
 <style>
-    fieldset { margin-bottom: 1.5rem; border: 1px solid #ddd; border-radius: 4px; padding: 1rem; }
-    legend { font-weight: 700; padding: 0 0.5rem; }
-    .field { margin-bottom: 0.75rem; display: flex; flex-direction: column; gap: 0.25rem; max-width: 400px; }
-    .error { color: #b00020; }
-    .ok { color: #1b5e20; }
-    .note { font-size: 0.85rem; color: #666; }
+    fieldset {
+        margin-bottom: 1.5rem;
+        border: 1px solid var(--z-border);
+        border-radius: var(--z-radius);
+        background: var(--z-card);
+        box-shadow: var(--z-shadow);
+        padding: 1.25rem 1.5rem;
+    }
+
+    legend {
+        font-weight: 700;
+        padding: 0 0.6rem;
+        color: var(--z-red);
+    }
+
+    .note {
+        font-size: 0.85rem;
+        color: var(--z-muted);
+    }
 </style>
 
 @code {

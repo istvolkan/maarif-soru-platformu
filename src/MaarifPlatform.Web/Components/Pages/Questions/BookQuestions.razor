@@ -13,7 +13,7 @@
 }
 else
 {
-    <h1>@_bookTitle — Sorular</h1>
+    <h1 class="page-title">@_bookTitle — Sorular</h1>
 
     @if (_questions is null || _questions.Count == 0)
     {
@@ -39,11 +39,7 @@ else
 }
 
 <style>
-    table { border-collapse: collapse; width: 100%; margin-top: 1rem; }
-    th, td { border: 1px solid #ddd; padding: 0.4rem 0.6rem; text-align: left; }
-    .status { padding: 0.1rem 0.5rem; border-radius: 4px; font-size: 0.85rem; background: #eee; }
-    .status-aiapproved, .status-editorapproved, .status-published { background: #c8e6c9; }
-    .status-manualreviewrequired, .status-rejected { background: #ffcdd2; }
+    table { margin-top: 1rem; }
 </style>
 
 @code {

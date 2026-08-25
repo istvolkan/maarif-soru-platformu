@@ -20,7 +20,7 @@ else if (_detail is null)
 }
 else
 {
-    <h1>Soru <small>(@_detail.Id)</small></h1>
+    <h1 class="page-title">Soru <small>(@_detail.Id)</small></h1>
     <p><span class="status status-@_detail.Status.ToLowerInvariant()">@_detail.Status</span></p>
 
     @if (_message is not null)
@@ -35,11 +35,11 @@ else
     <AuthorizeView Roles="Admin,Editor" Context="editorContext">
         <div class="actions">
             <button disabled="@_busy" @onclick="AnalyzeAsync">Analyze</button>
-            <button disabled="@_busy" @onclick="TransformAsync">Transform</button>
+            <button disabled="@_busy" @onclick="TransformAsync" class="secondary">Transform</button>
         </div>
     </AuthorizeView>
 
-    <section>
+    <section class="card">
         <h2>Analiz</h2>
         <dl>
             <dt>Matematiksel Öz</dt><dd>@(_detail.MathematicalCore ?? "-")</dd>
@@ -70,7 +70,7 @@ else
 
     @if (_detail.RequiresVisual)
     {
-        <section>
+        <section class="card">
             <h2>Görsel</h2>
             <dl>
                 <dt>Tür</dt><dd>@(_detail.VisualType ?? "-")</dd>
@@ -82,7 +82,7 @@ else
 
     @if (_detail.NewQuestion is not null)
     {
-        <section>
+        <section class="card">
             <h2>Dönüşüm Sonucu</h2>
             <p><strong>Yeni Soru:</strong> @_detail.NewQuestion</p>
             <ul>
@@ -105,7 +105,7 @@ else
             }
         </section>
 
-        <section>
+        <section class="card">
             <h2>Kalite (Judge)</h2>
             <dl>
                 <dt>Kalite Puanı</dt><dd>@(_detail.QualityScore?.ToString() ?? "-")</dd>
@@ -124,18 +124,12 @@ else
 }
 
 <style>
-    dl { display: grid; grid-template-columns: 220px 1fr; gap: 0.25rem 1rem; max-width: 700px; }
-    dt { font-weight: 600; }
-    table { border-collapse: collapse; width: 100%; margin-top: 0.5rem; }
-    th, td { border: 1px solid #ddd; padding: 0.4rem 0.6rem; text-align: left; }
-    section { margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid #eee; }
-    .actions { margin: 1rem 0; display: flex; gap: 0.5rem; }
-    .status { padding: 0.1rem 0.5rem; border-radius: 4px; font-size: 0.85rem; background: #eee; }
-    .status-aiapproved, .status-editorapproved, .status-published { background: #c8e6c9; }
-    .status-manualreviewrequired, .status-rejected { background: #ffcdd2; }
-    .correct { font-weight: 700; color: #1b5e20; }
-    .error { color: #b00020; }
-    .ok { color: #1b5e20; }
+    dl { display: grid; grid-template-columns: 220px 1fr; gap: 0.4rem 1rem; max-width: 700px; margin: 0; }
+    dt { font-weight: 600; color: var(--z-muted); }
+    dd { margin: 0; }
+    h2 { font-size: 1.05rem; margin-top: 0; border-left: 4px solid var(--z-red); padding-left: 0.6rem; }
+    table { margin-top: 0.75rem; }
+    .correct { font-weight: 700; color: var(--z-success); }
 </style>
 
 @code {

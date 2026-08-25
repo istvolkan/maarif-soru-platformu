@@ -18,33 +18,106 @@
 
 <PageTitle>Giriş</PageTitle>
 
-<div class="login-box">
-    <h1>Maarif Platform</h1>
-
-    @if (!string.IsNullOrEmpty(_error))
-    {
-        <p class="error">@_error</p>
-    }
-
-    <EditForm Model="_input" FormName="login" method="post" OnValidSubmit="HandleLoginAsync">
-        <DataAnnotationsValidator />
-        <div class="field">
-            <label>E-posta</label>
-            <InputText @bind-Value="_input.Email" />
+<div class="login-page">
+    <div class="login-box">
+        <div class="login-brand">
+            <span class="login-mark">Z</span>
         </div>
-        <div class="field">
-            <label>Parola</label>
-            <InputText @bind-Value="_input.Password" type="password" />
-        </div>
-        <button type="submit">Giriş Yap</button>
-    </EditForm>
+        <h1>Maarif Platform</h1>
+        <p class="login-subtitle">Soru Dönüşüm Sistemi</p>
+
+        @if (!string.IsNullOrEmpty(_error))
+        {
+            <p class="error">@_error</p>
+        }
+
+        <EditForm Model="_input" FormName="login" method="post" OnValidSubmit="HandleLoginAsync">
+            <DataAnnotationsValidator />
+            <div class="field">
+                <label>E-posta</label>
+                <InputText @bind-Value="_input.Email" />
+            </div>
+            <div class="field">
+                <label>Parola</label>
+                <InputText @bind-Value="_input.Password" type="password" />
+            </div>
+            <button type="submit">Giriş Yap</button>
+        </EditForm>
+    </div>
 </div>
 
 <style>
-    .login-box { max-width: 360px; margin: 4rem auto; font-family: sans-serif; }
-    .field { margin-bottom: 1rem; display: flex; flex-direction: column; gap: 0.25rem; }
-    .error { color: #b00020; }
-    button { padding: 0.5rem 1rem; }
+    .login-page {
+        min-height: calc(100vh - 5rem);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .login-box {
+        width: 100%;
+        max-width: 380px;
+        background: var(--z-card);
+        border: 1px solid var(--z-border);
+        border-radius: var(--z-radius);
+        box-shadow: var(--z-shadow);
+        padding: 2.5rem 2.25rem;
+        text-align: center;
+    }
+
+    .login-brand {
+        display: flex;
+        justify-content: center;
+        margin-bottom: 1rem;
+    }
+
+    .login-mark {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 3rem;
+        height: 3rem;
+        border-radius: 10px;
+        background: var(--z-red);
+        color: #fff;
+        font-weight: 800;
+        font-size: 1.5rem;
+    }
+
+    .login-box h1 {
+        margin: 0;
+        font-size: 1.4rem;
+    }
+
+    .login-subtitle {
+        color: var(--z-muted);
+        margin-top: 0.15rem;
+        margin-bottom: 1.75rem;
+        font-size: 0.9rem;
+    }
+
+    .field {
+        margin-bottom: 1rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.3rem;
+        text-align: left;
+    }
+
+    .login-box input {
+        max-width: none;
+    }
+
+    .login-box button {
+        width: 100%;
+        margin-top: 0.5rem;
+        padding: 0.65rem 1rem;
+    }
+
+    .login-box .error {
+        text-align: left;
+        margin-bottom: 1.25rem;
+    }
 </style>
 
 @code {
