@@ -25,8 +25,11 @@ else
         <AuthorizeView Roles="Admin,Editor" Context="editorContext">
             <div class="card batch-card">
                 <div class="actions">
-                    <button disabled="@_batchRunning" @onclick="RunBatchTransformAsync">
-                        @(_batchRunning ? "Dönüştürülüyor..." : "Tümünü Dönüştür")
+                    <button disabled="@_batchRunning" class="secondary" @onclick="() => RunBatchAsync(runTransform: false)">
+                        @(_batchRunning && !_batchIsTransform ? "Analiz Ediliyor..." : "Tümünü Analiz Et")
+                    </button>
+                    <button disabled="@_batchRunning" @onclick="() => RunBatchAsync(runTransform: true)">
+                        @(_batchRunning && _batchIsTransform ? "Dönüştürülüyor..." : "Tümünü Dönüştür")
                     </button>
                     <a class="btn btn-secondary" href="@($"/export/book/{BookId}/pdf")" target="_blank">PDF Oluştur / İndir</a>
                 </div>
@@ -86,6 +89,7 @@ else
     private List<QuestionRow>? _questions;
 
     private bool _batchRunning;
+    private bool _batchIsTransform;
     private bool? _batchDone;
     private int _batchTotal;
     private int _batchProcessed;
@@ -118,9 +122,10 @@ else
             .ToListAsync();
     }
 
-    private async Task RunBatchTransformAsync()
+    private async Task RunBatchAsync(bool runTransform)
     {
         _batchRunning = true;
+        _batchIsTransform = runTransform;
         _batchDone = false;
         _batchTotal = _questions?.Count ?? 0;
         _batchProcessed = 0;
@@ -135,7 +140,8 @@ else
         await using var scope = ScopeFactory.CreateAsyncScope();
         var batchService = scope.ServiceProvider.GetRequiredService<BookBatchTransformService>();
 
-        await foreach (var result in batchService.TransformBookAsync(BookId))
+        var stream = runTransform ? batchService.TransformBookAsync(BookId) : batchService.AnalyzeBookAsync(BookId);
+        await foreach (var result in stream)
         {
             _batchProcessed++;
             switch (result.Outcome)

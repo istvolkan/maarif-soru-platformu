@@ -146,6 +146,19 @@ public class BooksController(
         return response;
     }
 
+    [HttpPost("{id:guid}/analyze-all")]
+    [Authorize(Roles = "Admin,Editor")]
+    public async Task<ActionResult<BatchTransformResponse>> AnalyzeAll(Guid id, CancellationToken ct)
+    {
+        var bookExists = await db.Books.AnyAsync(b => b.Id == id, ct);
+        if (!bookExists)
+        {
+            return NotFound();
+        }
+
+        return await SummarizeBatchAsync(batchTransformService.AnalyzeBookAsync(id, ct), ct);
+    }
+
     [HttpPost("{id:guid}/transform-all")]
     [Authorize(Roles = "Admin,Editor")]
     public async Task<ActionResult<BatchTransformResponse>> TransformAll(Guid id, CancellationToken ct)
@@ -156,8 +169,14 @@ public class BooksController(
             return NotFound();
         }
 
+        return await SummarizeBatchAsync(batchTransformService.TransformBookAsync(id, ct), ct);
+    }
+
+    private static async Task<BatchTransformResponse> SummarizeBatchAsync(
+        IAsyncEnumerable<BatchQuestionResult> stream, CancellationToken ct)
+    {
         var results = new List<BatchQuestionResult>();
-        await foreach (var result in batchTransformService.TransformBookAsync(id, ct))
+        await foreach (var result in stream.WithCancellation(ct))
         {
             results.Add(result);
         }

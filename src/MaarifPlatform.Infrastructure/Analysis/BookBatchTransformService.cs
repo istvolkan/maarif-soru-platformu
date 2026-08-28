@@ -16,16 +16,26 @@ public enum BatchQuestionOutcome
 
 public sealed record BatchQuestionResult(Guid QuestionId, int? QuestionNo, BatchQuestionOutcome Outcome, string? Message);
 
-/// <summary>Bir kitaptaki tüm soruları sırayla Analyze→Transform akışından geçirir. Zaten
-/// sonuçlanmış (AiApproved/EditorApproved/Published/Rejected) sorulara dokunmaz — idempotent,
-/// tekrar çalıştırılabilir. Bir sorudaki hata (LLM hatası, grounding yokluğu vb.) tüm batch'i
-/// durdurmaz; sonraki soruyla devam edilir. Her soru kendi IServiceScopeFactory scope'unda
-/// işlenir — AnalysisOrchestrationService/TransformationOrchestrationService Scoped kayıtlı
-/// olduğu için uzun bir döngü boyunca tek bir DbContext paylaşılmaz.</summary>
+/// <summary>Bir kitaptaki tüm soruları toplu olarak Analyze veya Analyze→Transform akışından
+/// geçirir. Zaten sonuçlanmış sorulara dokunmaz — idempotent, tekrar çalıştırılabilir. Bir
+/// sorudaki hata (LLM hatası, grounding yokluğu vb.) tüm batch'i durdurmaz; sonraki soruyla
+/// devam edilir. Her soru kendi IServiceScopeFactory scope'unda işlenir —
+/// AnalysisOrchestrationService/TransformationOrchestrationService Scoped kayıtlı olduğu için
+/// uzun bir döngü boyunca tek bir DbContext paylaşılmaz.</summary>
 public class BookBatchTransformService(MaarifDbContext db, IServiceScopeFactory scopeFactory)
 {
-    public async IAsyncEnumerable<BatchQuestionResult> TransformBookAsync(
-        Guid bookId, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
+    /// <summary>Yalnızca Analyze çalıştırır, Transform'a hiç geçmez — Extracted durumundaki
+    /// sorular Analyzed/ManualReviewRequired'a taşınır. Analyzed ve sonrası durumdaki sorular
+    /// AlreadyDone sayılır.</summary>
+    public IAsyncEnumerable<BatchQuestionResult> AnalyzeBookAsync(Guid bookId, CancellationToken ct = default) =>
+        RunBatchAsync(bookId, runTransform: false, ct);
+
+    /// <summary>Extracted→Analyze, Analyzed→Transform akışının tamamını çalıştırır.</summary>
+    public IAsyncEnumerable<BatchQuestionResult> TransformBookAsync(Guid bookId, CancellationToken ct = default) =>
+        RunBatchAsync(bookId, runTransform: true, ct);
+
+    private async IAsyncEnumerable<BatchQuestionResult> RunBatchAsync(
+        Guid bookId, bool runTransform, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
     {
         var questionIds = await db.Questions
             .Where(q => q.BookId == bookId)
@@ -36,11 +46,11 @@ public class BookBatchTransformService(MaarifDbContext db, IServiceScopeFactory 
         foreach (var questionId in questionIds)
         {
             ct.ThrowIfCancellationRequested();
-            yield return await ProcessQuestionAsync(questionId, ct);
+            yield return await ProcessQuestionAsync(questionId, runTransform, ct);
         }
     }
 
-    private async Task<BatchQuestionResult> ProcessQuestionAsync(Guid questionId, CancellationToken ct)
+    private async Task<BatchQuestionResult> ProcessQuestionAsync(Guid questionId, bool runTransform, CancellationToken ct)
     {
         await using var scope = scopeFactory.CreateAsyncScope();
         var scopedDb = scope.ServiceProvider.GetRequiredService<MaarifDbContext>();
@@ -49,11 +59,13 @@ public class BookBatchTransformService(MaarifDbContext db, IServiceScopeFactory 
         if (question is null)
             return new BatchQuestionResult(questionId, null, BatchQuestionOutcome.Failed, "Soru bulunamadı.");
 
-        if (question.Status is QuestionStatus.AiApproved or QuestionStatus.EditorApproved
-            or QuestionStatus.Published or QuestionStatus.Rejected)
-        {
+        var alreadyDone = runTransform
+            ? question.Status is QuestionStatus.AiApproved or QuestionStatus.EditorApproved
+                or QuestionStatus.Published or QuestionStatus.Rejected
+            : question.Status != QuestionStatus.Extracted;
+
+        if (alreadyDone)
             return new BatchQuestionResult(questionId, question.QuestionNo, BatchQuestionOutcome.AlreadyDone, null);
-        }
 
         try
         {
@@ -64,7 +76,7 @@ public class BookBatchTransformService(MaarifDbContext db, IServiceScopeFactory 
                 await scopedDb.Entry(question).ReloadAsync(ct);
             }
 
-            if (question.Status == QuestionStatus.Analyzed)
+            if (runTransform && question.Status == QuestionStatus.Analyzed)
             {
                 var transformationService = scope.ServiceProvider.GetRequiredService<TransformationOrchestrationService>();
                 await transformationService.TransformAsync(questionId, ct);
@@ -75,6 +87,7 @@ public class BookBatchTransformService(MaarifDbContext db, IServiceScopeFactory 
             {
                 QuestionStatus.AiApproved or QuestionStatus.EditorApproved or QuestionStatus.Published
                     => BatchQuestionOutcome.Succeeded,
+                QuestionStatus.Analyzed when !runTransform => BatchQuestionOutcome.Succeeded,
                 QuestionStatus.Rejected => BatchQuestionOutcome.Rejected,
                 _ => BatchQuestionOutcome.NeedsReview
             };
