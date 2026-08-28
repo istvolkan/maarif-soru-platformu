@@ -1,6 +1,7 @@
 @page "/questions/book/{BookId:guid}"
 @rendermode InteractiveServer
 @attribute [Authorize]
+@using MaarifPlatform.Infrastructure.Analysis
 @using MaarifPlatform.Infrastructure.Persistence
 @using Microsoft.EntityFrameworkCore
 @inject IServiceScopeFactory ScopeFactory
@@ -21,6 +22,38 @@ else
     }
     else
     {
+        <AuthorizeView Roles="Admin,Editor" Context="editorContext">
+            <div class="card batch-card">
+                <div class="actions">
+                    <button disabled="@_batchRunning" @onclick="RunBatchTransformAsync">
+                        @(_batchRunning ? "Dönüştürülüyor..." : "Tümünü Dönüştür")
+                    </button>
+                    <a class="btn btn-secondary" href="@($"/export/book/{BookId}/pdf")" target="_blank">PDF Oluştur / İndir</a>
+                </div>
+
+                @if (_batchRunning || _batchDone is not null)
+                {
+                    <p class="batch-progress">
+                        İşlendi: @_batchProcessed / @_batchTotal
+                        — Başarılı: @_batchSucceeded
+                        — İncelemeli: @_batchNeedsReview
+                        — Reddedildi: @_batchRejected
+                        — Hatalı: @_batchFailed
+                        — Zaten Tamamdı: @_batchAlreadyDone
+                    </p>
+                    @if (_batchErrors.Count > 0)
+                    {
+                        <ul class="batch-errors">
+                            @foreach (var err in _batchErrors)
+                            {
+                                <li>Soru #@err.QuestionNo: @err.Message</li>
+                            }
+                        </ul>
+                    }
+                }
+            </div>
+        </AuthorizeView>
+
         <table>
             <thead><tr><th>#</th><th>Soru</th><th>Durum</th><th></th></tr></thead>
             <tbody>
@@ -40,6 +73,9 @@ else
 
 <style>
     table { margin-top: 1rem; }
+    .batch-card { margin-bottom: 1.25rem; }
+    .batch-progress { margin-top: 0.75rem; font-size: 0.92rem; color: var(--z-muted); }
+    .batch-errors { margin-top: 0.5rem; color: var(--z-danger); font-size: 0.88rem; }
 </style>
 
 @code {
@@ -49,7 +85,20 @@ else
     private string? _bookTitle;
     private List<QuestionRow>? _questions;
 
-    protected override async Task OnInitializedAsync()
+    private bool _batchRunning;
+    private bool? _batchDone;
+    private int _batchTotal;
+    private int _batchProcessed;
+    private int _batchSucceeded;
+    private int _batchNeedsReview;
+    private int _batchRejected;
+    private int _batchFailed;
+    private int _batchAlreadyDone;
+    private List<BatchQuestionResult> _batchErrors = new();
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
     {
         await using var scope = ScopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<MaarifDbContext>();
@@ -67,6 +116,45 @@ else
                     .FirstOrDefault(),
                 q.Status.ToString()))
             .ToListAsync();
+    }
+
+    private async Task RunBatchTransformAsync()
+    {
+        _batchRunning = true;
+        _batchDone = false;
+        _batchTotal = _questions?.Count ?? 0;
+        _batchProcessed = 0;
+        _batchSucceeded = 0;
+        _batchNeedsReview = 0;
+        _batchRejected = 0;
+        _batchFailed = 0;
+        _batchAlreadyDone = 0;
+        _batchErrors = new List<BatchQuestionResult>();
+        StateHasChanged();
+
+        await using var scope = ScopeFactory.CreateAsyncScope();
+        var batchService = scope.ServiceProvider.GetRequiredService<BookBatchTransformService>();
+
+        await foreach (var result in batchService.TransformBookAsync(BookId))
+        {
+            _batchProcessed++;
+            switch (result.Outcome)
+            {
+                case BatchQuestionOutcome.Succeeded: _batchSucceeded++; break;
+                case BatchQuestionOutcome.NeedsReview: _batchNeedsReview++; break;
+                case BatchQuestionOutcome.Rejected: _batchRejected++; break;
+                case BatchQuestionOutcome.AlreadyDone: _batchAlreadyDone++; break;
+                case BatchQuestionOutcome.Failed:
+                    _batchFailed++;
+                    _batchErrors.Add(result);
+                    break;
+            }
+            StateHasChanged();
+        }
+
+        _batchRunning = false;
+        _batchDone = true;
+        await LoadAsync();
     }
 
     private static string Truncate(string? text) =>

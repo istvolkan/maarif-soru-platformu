@@ -30,3 +30,14 @@ public record QuestionSummaryResponse(
     int OptionCount,
     bool EditorRequired,
     IReadOnlyList<string> QualityFlags);
+
+public record BatchTransformResponse(
+    int Total,
+    int Succeeded,
+    int NeedsReview,
+    int Rejected,
+    int Failed,
+    int AlreadyDone,
+    IReadOnlyList<BatchQuestionErrorResponse> Errors);
+
+public record BatchQuestionErrorResponse(Guid QuestionId, int? QuestionNo, string Message);

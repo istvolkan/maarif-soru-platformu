@@ -1,9 +1,12 @@
 using MaarifPlatform.Infrastructure;
 using MaarifPlatform.Infrastructure.Auth;
 using MaarifPlatform.Infrastructure.Configuration;
+using MaarifPlatform.Infrastructure.Export;
+using MaarifPlatform.Infrastructure.Persistence;
 using MaarifPlatform.Web.Components;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -71,6 +74,21 @@ app.MapPost("/logout", async (HttpContext ctx) =>
     await ctx.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
     return Results.LocalRedirect("/login");
 });
+
+// PDF indirme de gerçek bir HTTP isteği gerektirir (dosya indirme, SignalR circuit üzerinden
+// olmaz) — BookQuestions.razor'daki <a href> buraya doğrudan bağlanır, cookie auth ile korunur.
+app.MapGet("/export/book/{bookId:guid}/pdf", async (Guid bookId, BookPdfExportService exportService, MaarifDbContext db, CancellationToken ct) =>
+{
+    var book = await db.Books.FirstOrDefaultAsync(b => b.Id == bookId, ct);
+    if (book is null)
+    {
+        return Results.NotFound();
+    }
+
+    var pdfBytes = await exportService.GenerateAsync(bookId, ct);
+    var fileName = $"{book.Title}-donusturulmus.pdf".Replace(' ', '-');
+    return Results.File(pdfBytes, "application/pdf", fileName);
+}).RequireAuthorization();
 
 using (var scope = app.Services.CreateScope())
 {

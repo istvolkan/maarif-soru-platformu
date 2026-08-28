@@ -2,6 +2,8 @@ using System.Text.Json;
 using MaarifPlatform.Api.Dtos;
 using MaarifPlatform.Application.Storage;
 using MaarifPlatform.Domain.Entities;
+using MaarifPlatform.Infrastructure.Analysis;
+using MaarifPlatform.Infrastructure.Export;
 using MaarifPlatform.Infrastructure.Extraction;
 using MaarifPlatform.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authorization;
@@ -15,7 +17,12 @@ namespace MaarifPlatform.Api.Controllers;
 [ApiController]
 [Route("api/books")]
 [Authorize]
-public class BooksController(MaarifDbContext db, IBookFileStorage storage, BookExtractionService extractionService)
+public class BooksController(
+    MaarifDbContext db,
+    IBookFileStorage storage,
+    BookExtractionService extractionService,
+    BookBatchTransformService batchTransformService,
+    BookPdfExportService pdfExportService)
     : ControllerBase
 {
     private static readonly string[] AllowedExtensions = [".pdf"];
@@ -137,6 +144,48 @@ public class BooksController(MaarifDbContext db, IBookFileStorage storage, BookE
         }).ToList();
 
         return response;
+    }
+
+    [HttpPost("{id:guid}/transform-all")]
+    [Authorize(Roles = "Admin,Editor")]
+    public async Task<ActionResult<BatchTransformResponse>> TransformAll(Guid id, CancellationToken ct)
+    {
+        var bookExists = await db.Books.AnyAsync(b => b.Id == id, ct);
+        if (!bookExists)
+        {
+            return NotFound();
+        }
+
+        var results = new List<BatchQuestionResult>();
+        await foreach (var result in batchTransformService.TransformBookAsync(id, ct))
+        {
+            results.Add(result);
+        }
+
+        return new BatchTransformResponse(
+            results.Count,
+            results.Count(r => r.Outcome == BatchQuestionOutcome.Succeeded),
+            results.Count(r => r.Outcome == BatchQuestionOutcome.NeedsReview),
+            results.Count(r => r.Outcome == BatchQuestionOutcome.Rejected),
+            results.Count(r => r.Outcome == BatchQuestionOutcome.Failed),
+            results.Count(r => r.Outcome == BatchQuestionOutcome.AlreadyDone),
+            results.Where(r => r.Outcome == BatchQuestionOutcome.Failed)
+                .Select(r => new BatchQuestionErrorResponse(r.QuestionId, r.QuestionNo, r.Message ?? ""))
+                .ToList());
+    }
+
+    [HttpGet("{id:guid}/export-pdf")]
+    public async Task<IActionResult> ExportPdf(Guid id, CancellationToken ct)
+    {
+        var book = await db.Books.FirstOrDefaultAsync(b => b.Id == id, ct);
+        if (book is null)
+        {
+            return NotFound();
+        }
+
+        var pdfBytes = await pdfExportService.GenerateAsync(id, ct);
+        var fileName = $"{book.Title}-donusturulmus.pdf".Replace(' ', '-');
+        return File(pdfBytes, "application/pdf", fileName);
     }
 
     private static BookResponse ToResponse(Book book) => new(

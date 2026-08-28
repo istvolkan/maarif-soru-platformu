@@ -9,6 +9,7 @@ using MaarifPlatform.Infrastructure.Ai;
 using MaarifPlatform.Infrastructure.Analysis;
 using MaarifPlatform.Infrastructure.Auth;
 using MaarifPlatform.Infrastructure.Configuration;
+using MaarifPlatform.Infrastructure.Export;
 using MaarifPlatform.Infrastructure.Extraction;
 using MaarifPlatform.Infrastructure.Persistence;
 using MaarifPlatform.Infrastructure.Rag;
@@ -33,6 +34,10 @@ public static class DependencyInjection
 {
     public static IServiceCollection AddMaarifPlatformCore(this IServiceCollection services, IConfiguration configuration)
     {
+        // Zafer Koleji bir akademik kurum olduğu için QuestPDF Community lisansı gelir eşiğinden
+        // muaf (bkz. https://www.questpdf.com/license/community.html).
+        QuestPDF.Settings.License = QuestPDF.Infrastructure.LicenseType.Community;
+
         var connectionString = configuration.GetConnectionString("MaarifDb")
             ?? throw new InvalidOperationException("ConnectionStrings:MaarifDb tanımlı değil.");
 
@@ -80,6 +85,8 @@ public static class DependencyInjection
         services.AddScoped<AnalysisOrchestrationService>();
         services.AddScoped<TransformationOrchestrationService>();
         services.AddScoped<GenerationOrchestrationService>();
+        services.AddScoped<BookBatchTransformService>();
+        services.AddScoped<BookPdfExportService>();
 
         // §3/§7/§10 Vision mimarisi. Aynı şekilde birincil/ikincil seçim IOptionsMonitor üzerinden
         // çalışma-zamanlıdır.
