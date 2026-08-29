@@ -1,4 +1,5 @@
 using System.Text.Json;
+using MaarifPlatform.Application.Storage;
 using MaarifPlatform.Domain.Entities;
 using MaarifPlatform.Domain.Enums;
 using MaarifPlatform.Infrastructure.Persistence;
@@ -9,13 +10,14 @@ using QuestPDF.Infrastructure;
 
 namespace MaarifPlatform.Infrastructure.Export;
 
-public sealed record ExportableQuestion(int? QuestionNo, string Question, IReadOnlyList<string> Options, string CorrectLabel, string? Solution);
+public sealed record ExportableQuestion(
+    int? QuestionNo, string Question, IReadOnlyList<string> Options, string CorrectLabel, string? Solution, byte[]? VisualImage);
 
 /// <summary>Kitaptaki AiApproved/EditorApproved/Published sorulardan yeni bir soru kitabı PDF'i
 /// üretir — İncelemeye Gönderilmiş (ManualReviewRequired) veya henüz dönüştürülmemiş sorular
-/// dahil edilmez (bkz. BookBatchTransformService). Üç bölüm: sorular, cevap anahtarı, çözümler
-/// — tipik Türk soru bankası formatı.</summary>
-public class BookPdfExportService(MaarifDbContext db)
+/// dahil edilmez (bkz. BookBatchTransformService). Üç bölüm: sorular (varsa görselleriyle),
+/// cevap anahtarı, çözümler — tipik Türk soru bankası formatı.</summary>
+public class BookPdfExportService(MaarifDbContext db, IBookFileStorage storage)
 {
     private static readonly string[] Labels = ["A", "B", "C", "D", "E", "F"];
 
@@ -51,7 +53,21 @@ public class BookPdfExportService(MaarifDbContext db)
             var correctLabel = correctIndex >= 0 && correctIndex < Labels.Length ? Labels[correctIndex] : "-";
 
             var question = await db.Questions.FirstAsync(q => q.Id == questionId, ct);
-            questions.Add(new ExportableQuestion(question.QuestionNo, dna.NewQuestion, options, correctLabel, dna.Solution));
+
+            byte[]? visualImage = null;
+            var visualAsset = await db.QuestionVisualAssets
+                .Where(a => a.QuestionId == questionId)
+                .OrderByDescending(a => a.CreatedAt)
+                .FirstOrDefaultAsync(ct);
+            if (visualAsset is not null)
+            {
+                await using var visualStream = await storage.OpenReadAsync(visualAsset.StorageUri, ct);
+                using var buffer = new MemoryStream();
+                await visualStream.CopyToAsync(buffer, ct);
+                visualImage = buffer.ToArray();
+            }
+
+            questions.Add(new ExportableQuestion(question.QuestionNo, dna.NewQuestion, options, correctLabel, dna.Solution, visualImage));
         }
 
         var document = Document.Create(container =>
@@ -78,6 +94,10 @@ public class BookPdfExportService(MaarifDbContext db)
                         col.Item().PaddingBottom(14).Column(qCol =>
                         {
                             qCol.Item().Text($"{q.QuestionNo}. {q.Question}").Bold();
+                            if (q.VisualImage is not null)
+                            {
+                                qCol.Item().PaddingLeft(15).PaddingTop(4).MaxWidth(300).Image(q.VisualImage);
+                            }
                             for (var i = 0; i < q.Options.Count; i++)
                             {
                                 qCol.Item().PaddingLeft(15).Text($"{Labels[i]}) {q.Options[i]}");

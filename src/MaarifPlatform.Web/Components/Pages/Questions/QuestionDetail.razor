@@ -72,6 +72,14 @@ else
     {
         <section class="card">
             <h2>Görsel</h2>
+            @if (_hasVisualAsset)
+            {
+                <img class="visual-image" src="@($"/media/question/{Id}/visual")" alt="Soru görseli" />
+            }
+            else
+            {
+                <p class="page-intro">Görsel çıkarılmamış — bu genelde Vision desteği olmayan bir sağlayıcıyla (örn. Local mock) analiz edildiğinde olur.</p>
+            }
             <dl>
                 <dt>Tür</dt><dd>@(_detail.VisualType ?? "-")</dd>
                 <dt>Güven</dt><dd>@(_detail.VisualConfidence?.ToString() ?? "-")</dd>
@@ -130,6 +138,7 @@ else
     h2 { font-size: 1.05rem; margin-top: 0; border-left: 4px solid var(--z-red); padding-left: 0.6rem; }
     table { margin-top: 0.75rem; }
     .correct { font-weight: 700; color: var(--z-success); }
+    .visual-image { max-width: 100%; border: 1px solid var(--z-border); border-radius: var(--z-radius); margin-bottom: 0.75rem; }
 </style>
 
 @code {
@@ -141,6 +150,7 @@ else
     private string? _message;
     private string? _error;
     private QuestionDetailModel? _detail;
+    private bool _hasVisualAsset;
 
     protected override async Task OnInitializedAsync() => await LoadAsync();
 
@@ -157,6 +167,8 @@ else
             _loading = false;
             return;
         }
+
+        _hasVisualAsset = await db.QuestionVisualAssets.AnyAsync(a => a.QuestionId == Id);
 
         var latestVersion = await db.QuestionVersions
             .Include(v => v.Dna)

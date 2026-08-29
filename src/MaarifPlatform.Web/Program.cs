@@ -1,3 +1,4 @@
+using MaarifPlatform.Application.Storage;
 using MaarifPlatform.Infrastructure;
 using MaarifPlatform.Infrastructure.Auth;
 using MaarifPlatform.Infrastructure.Configuration;
@@ -88,6 +89,23 @@ app.MapGet("/export/book/{bookId:guid}/pdf", async (Guid bookId, BookPdfExportSe
     var pdfBytes = await exportService.GenerateAsync(bookId, ct);
     var fileName = $"{book.Title}-donusturulmus.pdf".Replace(' ', '-');
     return Results.File(pdfBytes, "application/pdf", fileName);
+}).RequireAuthorization();
+
+// Soru için PDF'ten çıkarılmış görsel (grafik/şekil sayfası) — QuestionDetail.razor'daki <img>
+// buraya işaret eder. Görsel yoksa (RequiresVisual=false ya da hiç render edilmemişse) 404.
+app.MapGet("/media/question/{questionId:guid}/visual", async (Guid questionId, MaarifDbContext db, IBookFileStorage storage, CancellationToken ct) =>
+{
+    var asset = await db.QuestionVisualAssets
+        .Where(a => a.QuestionId == questionId)
+        .OrderByDescending(a => a.CreatedAt)
+        .FirstOrDefaultAsync(ct);
+    if (asset is null)
+    {
+        return Results.NotFound();
+    }
+
+    var stream = await storage.OpenReadAsync(asset.StorageUri, ct);
+    return Results.File(stream, "image/png");
 }).RequireAuthorization();
 
 using (var scope = app.Services.CreateScope())
