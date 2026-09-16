@@ -164,7 +164,7 @@ else
         {
             await ingestionService.IngestAsync(documentId);
         }
-        catch (InvalidOperationException ex)
+        catch (Exception ex)
         {
             _error = ex.Message;
         }

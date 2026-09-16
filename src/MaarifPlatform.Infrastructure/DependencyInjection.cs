@@ -106,6 +106,10 @@ public static class DependencyInjection
 
         services.AddScoped<VisionAnalysisService>();
 
+        // Admin Ayarlar ekranındaki Model dropdown'ları için — sağlayıcıların canlı model
+        // kataloğunu sorgular (bkz. ProviderModelCatalogService üstündeki gerekçe).
+        services.AddHttpClient<ProviderModelCatalogService>();
+
         // Auth çekirdeği — JWT ÜRETİMİ (doğrulama middleware'i değil) ve parola doğrulama burada;
         // her iki host da aynı AuthService.LoginAsync'i kullanır.
         services.Configure<JwtOptions>(configuration.GetSection("Auth:Jwt"));

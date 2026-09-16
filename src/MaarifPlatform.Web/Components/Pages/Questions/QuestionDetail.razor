@@ -7,6 +7,7 @@
 @using MaarifPlatform.Infrastructure.Persistence
 @using Microsoft.EntityFrameworkCore
 @inject IServiceScopeFactory ScopeFactory
+@inject ILogger<QuestionDetail> Logger
 
 <PageTitle>Soru Detayı</PageTitle>
 
@@ -237,8 +238,9 @@ else
             var result = await service.AnalyzeAsync(Id);
             _message = $"Analiz tamamlandı: skor {result.WeightedScore}, seviye {result.TransformationLevel}.";
         }
-        catch (InvalidOperationException ex)
+        catch (Exception ex)
         {
+            Logger.LogError(ex, "Soru analizi başarısız: {QuestionId}", Id);
             _error = ex.Message;
         }
         finally
@@ -263,8 +265,9 @@ else
                 ? $"Dönüşüm atlandı ({result.TransformationLevel}) — doğrudan AiApproved."
                 : $"Dönüşüm tamamlandı: kalite puanı {result.QualityScore}, geçti mi {result.Passed}.";
         }
-        catch (InvalidOperationException ex)
+        catch (Exception ex)
         {
+            Logger.LogError(ex, "Soru dönüşümü başarısız: {QuestionId}", Id);
             _error = ex.Message;
         }
         finally

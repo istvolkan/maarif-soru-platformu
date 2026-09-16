@@ -133,7 +133,7 @@ else
         {
             await extractionService.ExtractAsync(bookId);
         }
-        catch (InvalidOperationException ex)
+        catch (Exception ex)
         {
             _error = ex.Message;
         }

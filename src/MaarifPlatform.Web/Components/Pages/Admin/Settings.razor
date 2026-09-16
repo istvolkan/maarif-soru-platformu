@@ -2,6 +2,7 @@
 @rendermode InteractiveServer
 @attribute [Authorize(Roles = "Admin")]
 @using System.Security.Claims
+@using MaarifPlatform.Infrastructure.Ai
 @using MaarifPlatform.Infrastructure.Configuration
 @inject IConfiguration Configuration
 @inject IServiceScopeFactory ScopeFactory
@@ -35,7 +36,20 @@
             </InputSelect>
         </div>
         <div class="field"><label>Anthropic API Key @KeyStatus(_hasAnthropicKey)</label><InputText @bind-Value="_form.AnthropicApiKey" type="password" placeholder="değiştirmek için doldurun" /></div>
-        <div class="field"><label>Anthropic Model</label><InputText @bind-Value="_form.AnthropicModel" /></div>
+        <div class="field">
+            <label>Anthropic Model</label>
+            <div class="model-field">
+                <InputText @bind-Value="_form.AnthropicModel" />
+                <select @onchange="e => _form.AnthropicModel = e.Value?.ToString() ?? _form.AnthropicModel">
+                    <option value="">— listeden seç —</option>
+                    @foreach (var m in _anthropicModels)
+                    {
+                        <option value="@m.Id" selected="@(m.Id == _form.AnthropicModel)">@(m.DisplayName ?? m.Id)</option>
+                    }
+                </select>
+                <button type="button" class="secondary" disabled="@_loadingAnthropicModels" @onclick="LoadAnthropicModelsAsync">@(_loadingAnthropicModels ? "Yükleniyor…" : "Modelleri Getir")</button>
+            </div>
+        </div>
         <div class="field"><label>Anthropic Max Tokens</label><InputNumber @bind-Value="_form.AnthropicMaxTokens" /></div>
     </fieldset>
 
@@ -50,7 +64,20 @@
             </InputSelect>
         </div>
         <div class="field"><label>OpenAI API Key @KeyStatus(_hasOpenAiKey)</label><InputText @bind-Value="_form.OpenAiApiKey" type="password" placeholder="değiştirmek için doldurun" /></div>
-        <div class="field"><label>OpenAI Model</label><InputText @bind-Value="_form.OpenAiModel" /></div>
+        <div class="field">
+            <label>OpenAI Model</label>
+            <div class="model-field">
+                <InputText @bind-Value="_form.OpenAiModel" />
+                <select @onchange="e => _form.OpenAiModel = e.Value?.ToString() ?? _form.OpenAiModel">
+                    <option value="">— listeden seç —</option>
+                    @foreach (var m in _openAiModels)
+                    {
+                        <option value="@m.Id" selected="@(m.Id == _form.OpenAiModel)">@(m.DisplayName ?? m.Id)</option>
+                    }
+                </select>
+                <button type="button" class="secondary" disabled="@_loadingOpenAiModels" @onclick="LoadOpenAiModelsAsync">@(_loadingOpenAiModels ? "Yükleniyor…" : "Modelleri Getir")</button>
+            </div>
+        </div>
         <div class="field"><label>OpenAI Max Tokens</label><InputNumber @bind-Value="_form.OpenAiMaxTokens" /></div>
         <div class="field"><label>Consensus Güven Eşiği (0-1)</label><InputNumber @bind-Value="_form.JudgeConsensusConfidenceThreshold" step="0.05" /></div>
         <div class="field"><label>Consensus Puan Farkı Eşiği</label><InputNumber @bind-Value="_form.JudgeConsensusScoreDeltaThreshold" /></div>
@@ -75,7 +102,20 @@
             </InputSelect>
         </div>
         <div class="field"><label>Gemini API Key @KeyStatus(_hasGeminiKey)</label><InputText @bind-Value="_form.GeminiApiKey" type="password" placeholder="değiştirmek için doldurun" /></div>
-        <div class="field"><label>Gemini Model</label><InputText @bind-Value="_form.GeminiModel" /></div>
+        <div class="field">
+            <label>Gemini Model</label>
+            <div class="model-field">
+                <InputText @bind-Value="_form.GeminiModel" />
+                <select @onchange="e => _form.GeminiModel = e.Value?.ToString() ?? _form.GeminiModel">
+                    <option value="">— listeden seç —</option>
+                    @foreach (var m in _geminiModels)
+                    {
+                        <option value="@m.Id" selected="@(m.Id == _form.GeminiModel)">@(m.DisplayName ?? m.Id)</option>
+                    }
+                </select>
+                <button type="button" class="secondary" disabled="@_loadingGeminiModels" @onclick="LoadGeminiModelsAsync">@(_loadingGeminiModels ? "Yükleniyor…" : "Modelleri Getir")</button>
+            </div>
+        </div>
         <div class="field"><label>Vision Anthropic API Key @KeyStatus(_hasVisionAnthropicKey)</label><InputText @bind-Value="_form.VisionAnthropicApiKey" type="password" placeholder="değiştirmek için doldurun" /></div>
         <div class="field"><label>Vision Anthropic Model</label><InputText @bind-Value="_form.VisionAnthropicModel" /></div>
         <div class="field"><label>Consensus Güven Eşiği (0-1)</label><InputNumber @bind-Value="_form.VisionConsensusConfidenceThreshold" step="0.05" /></div>
@@ -118,6 +158,15 @@
         font-size: 0.85rem;
         color: var(--z-muted);
     }
+
+    .model-field {
+        display: flex;
+        gap: 0.5rem;
+        align-items: center;
+    }
+
+    .model-field ::deep input { flex: 1; min-width: 0; }
+    .model-field select { max-width: 260px; }
 </style>
 
 @code {
@@ -125,6 +174,11 @@
     private bool _hasAnthropicKey, _hasGeminiKey, _hasVisionAnthropicKey, _hasOpenAiKey, _hasEmbeddingsKey;
     private string? _message;
     private string? _error;
+
+    private List<ProviderModelOption> _anthropicModels = new();
+    private List<ProviderModelOption> _openAiModels = new();
+    private List<ProviderModelOption> _geminiModels = new();
+    private bool _loadingAnthropicModels, _loadingOpenAiModels, _loadingGeminiModels;
 
     protected override void OnInitialized()
     {
@@ -154,6 +208,66 @@
     }
 
     private static string KeyStatus(bool hasKey) => hasKey ? "(ayarlı)" : "(ayarlı değil)";
+
+    private async Task LoadAnthropicModelsAsync()
+    {
+        _loadingAnthropicModels = true;
+        _error = null;
+        try
+        {
+            await using var scope = ScopeFactory.CreateAsyncScope();
+            var catalog = scope.ServiceProvider.GetRequiredService<ProviderModelCatalogService>();
+            _anthropicModels = (await catalog.ListAnthropicModelsAsync(_form.AnthropicApiKey)).ToList();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _loadingAnthropicModels = false;
+        }
+    }
+
+    private async Task LoadOpenAiModelsAsync()
+    {
+        _loadingOpenAiModels = true;
+        _error = null;
+        try
+        {
+            await using var scope = ScopeFactory.CreateAsyncScope();
+            var catalog = scope.ServiceProvider.GetRequiredService<ProviderModelCatalogService>();
+            _openAiModels = (await catalog.ListOpenAiModelsAsync(_form.OpenAiApiKey)).ToList();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _loadingOpenAiModels = false;
+        }
+    }
+
+    private async Task LoadGeminiModelsAsync()
+    {
+        _loadingGeminiModels = true;
+        _error = null;
+        try
+        {
+            await using var scope = ScopeFactory.CreateAsyncScope();
+            var catalog = scope.ServiceProvider.GetRequiredService<ProviderModelCatalogService>();
+            _geminiModels = (await catalog.ListGeminiModelsAsync(_form.GeminiApiKey)).ToList();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _loadingGeminiModels = false;
+        }
+    }
 
     private async Task SaveAsync()
     {
