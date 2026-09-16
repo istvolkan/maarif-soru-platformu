@@ -208,6 +208,25 @@ public class TransformationOrchestrationService(
             evalResult.QualityScore, evalResult.Passed, transformResult.Usage, evalResult.Usage);
     }
 
+    /// <summary>ManualReviewRequired'a düşen bir soru için editörün elle verdiği karar —
+    /// Judge'ın otomatik AiApproved/ManualReviewRequired ayrımının insan tarafından tamamlanması.</summary>
+    public async Task ReviewAsync(Guid questionId, bool approve, CancellationToken ct = default)
+    {
+        var question = await db.Questions.FirstOrDefaultAsync(q => q.Id == questionId, ct)
+            ?? throw new InvalidOperationException($"Soru bulunamadı: {questionId}");
+
+        if (question.Status != QuestionStatus.ManualReviewRequired)
+        {
+            throw new InvalidOperationException(
+                $"Soru manuel inceleme için uygun durumda değil (Status={question.Status}, ManualReviewRequired bekleniyor).");
+        }
+
+        question.Status = approve ? QuestionStatus.EditorApproved : QuestionStatus.Rejected;
+        question.UpdatedAt = DateTimeOffset.UtcNow;
+
+        await db.SaveChangesAsync(ct);
+    }
+
     private static AiRun BuildAiRun(Guid questionId, PipelineStage stage, AiUsage usage, string providerName) => new()
     {
         QuestionId = questionId,

@@ -36,6 +36,8 @@ public record AlignmentScoreResponse(
 
 public record DistractorResponse(string OptionLabel, string? MisconceptionCode, string? Explanation);
 
+public record ReviewDecisionRequest(bool Approve);
+
 public record QuestionDetailResponse(
     Guid Id,
     int? QuestionNo,

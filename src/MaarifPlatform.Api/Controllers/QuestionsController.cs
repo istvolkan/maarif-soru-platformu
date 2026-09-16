@@ -73,6 +73,21 @@ public class QuestionsController(
         }
     }
 
+    [HttpPost("{id:guid}/review")]
+    [Authorize(Roles = "Admin,Editor")]
+    public async Task<IActionResult> Review(Guid id, ReviewDecisionRequest request, CancellationToken ct)
+    {
+        try
+        {
+            await transformationService.ReviewAsync(id, request.Approve, ct);
+            return NoContent();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(ex.Message);
+        }
+    }
+
     [HttpGet("{id:guid}")]
     public async Task<ActionResult<QuestionDetailResponse>> GetById(Guid id, CancellationToken ct)
     {

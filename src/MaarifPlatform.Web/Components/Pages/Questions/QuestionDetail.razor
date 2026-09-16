@@ -37,6 +37,11 @@ else
         <div class="actions">
             <button disabled="@_busy" @onclick="AnalyzeAsync">Analyze</button>
             <button disabled="@_busy" @onclick="TransformAsync" class="secondary">Transform</button>
+            @if (_detail.Status == "ManualReviewRequired")
+            {
+                <button disabled="@_busy" @onclick="ApproveAsync" class="approve">Onayla</button>
+                <button disabled="@_busy" @onclick="RejectAsync" class="reject">Reddet</button>
+            }
         </div>
     </AuthorizeView>
 
@@ -140,6 +145,10 @@ else
     table { margin-top: 0.75rem; }
     .correct { font-weight: 700; color: var(--z-success); }
     .visual-image { max-width: 100%; border: 1px solid var(--z-border); border-radius: var(--z-radius); margin-bottom: 0.75rem; }
+    button.approve { background: var(--z-success); border-color: var(--z-success); }
+    button.approve:hover:not(:disabled) { background: #156b30; border-color: #156b30; }
+    button.reject { background: var(--z-danger); border-color: var(--z-danger); }
+    button.reject:hover:not(:disabled) { background: #a02121; border-color: #a02121; }
 </style>
 
 @code {
@@ -241,6 +250,35 @@ else
         catch (Exception ex)
         {
             Logger.LogError(ex, "Soru analizi başarısız: {QuestionId}", Id);
+            _error = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+
+        await LoadAsync();
+    }
+
+    private async Task ApproveAsync() => await ReviewAsync(approve: true);
+
+    private async Task RejectAsync() => await ReviewAsync(approve: false);
+
+    private async Task ReviewAsync(bool approve)
+    {
+        _busy = true;
+        _error = null;
+        _message = null;
+        await using var scope = ScopeFactory.CreateAsyncScope();
+        var service = scope.ServiceProvider.GetRequiredService<TransformationOrchestrationService>();
+        try
+        {
+            await service.ReviewAsync(Id, approve);
+            _message = approve ? "Soru onaylandı." : "Soru reddedildi.";
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Soru inceleme kararı başarısız: {QuestionId}", Id);
             _error = ex.Message;
         }
         finally
