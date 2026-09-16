@@ -87,3 +87,14 @@ public sealed record GenerateQuestionResult(
     string Solution,
     IReadOnlyList<DistractorDto> Distractors,
     AiUsage Usage);
+
+// ManualReviewRequired'a düşmüş, henüz Transform'a girmemiş sorular için editöre yönelik
+// aksiyona dönük düzeltme önerisi — rubric.Issues'un (RubricEngine) teşhis odaklı açıklamalarından
+// farklı olarak "nasıl düzeltilir" sorusuna cevap verir.
+public sealed record RecommendRevisionRequest(
+    string OriginalQuestion,
+    int MaarifAlignmentScore,
+    IReadOnlyList<string> Issues,
+    IReadOnlyList<GroundingReference> Grounding);
+
+public sealed record RecommendRevisionResult(string RevisionSuggestion, AiUsage Usage);

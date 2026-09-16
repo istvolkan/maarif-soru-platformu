@@ -21,6 +21,7 @@ public class AnthropicLLMProvider : ILLMProvider
     private const string TransformToolName = "submit_transformation";
     private const string EvaluateToolName = "submit_evaluation";
     private const string GenerateToolName = "submit_generation";
+    private const string RecommendRevisionToolName = "submit_revision_recommendation";
 
     private readonly IOptionsMonitor<AnthropicOptions> _optionsMonitor;
     private AnthropicClient? _client;
@@ -172,6 +173,74 @@ public class AnthropicLLMProvider : ILLMProvider
 
         var usage = BuildUsage(response, stopwatch, options);
         return ParseGenerateResult(toolUse.Input, usage);
+    }
+
+    public async Task<RecommendRevisionResult> RecommendRevisionAsync(RecommendRevisionRequest request, CancellationToken ct = default)
+    {
+        var (options, client) = Current();
+        var parameters = new MessageCreateParams
+        {
+            Model = options.Model,
+            MaxTokens = options.MaxTokens,
+            System = BuildRecommendRevisionSystemPrompt(request),
+            Tools = [BuildRecommendRevisionTool()],
+            ToolChoice = new ToolChoiceTool { Name = RecommendRevisionToolName },
+            Messages = [new() { Role = Role.User, Content = request.OriginalQuestion }],
+        };
+
+        var stopwatch = Stopwatch.StartNew();
+        var response = await client.Messages.Create(parameters, ct);
+        stopwatch.Stop();
+
+        var toolUse = response.Content
+            .Select(b => b.Value)
+            .OfType<ToolUseBlock>()
+            .FirstOrDefault(b => b.Name == RecommendRevisionToolName)
+            ?? throw new InvalidOperationException("Anthropic yanıtında beklenen submit_revision_recommendation tool_use bloğu bulunamadı.");
+
+        var usage = BuildUsage(response, stopwatch, options);
+        var suggestion = toolUse.Input.TryGetValue("revision_suggestion", out var s) ? s.GetString() ?? "" : "";
+        return new RecommendRevisionResult(suggestion, usage);
+    }
+
+    private static Tool BuildRecommendRevisionTool() => new()
+    {
+        Name = RecommendRevisionToolName,
+        Description = "Sorunun Maarif uyumunu artırmak için somut, aksiyona dönük düzeltme önerisini bildir.",
+        InputSchema = new()
+        {
+            Properties = new Dictionary<string, JsonElement>
+            {
+                ["revision_suggestion"] = Schema("string",
+                    "Editörün doğrudan uygulayabileceği somut düzeltme önerisi (nedenini değil, nasıl " +
+                    "düzeltileceğini anlat). 2-5 cümle.")
+            },
+            Required = ["revision_suggestion"]
+        }
+    };
+
+    private static string BuildRecommendRevisionSystemPrompt(RecommendRevisionRequest request)
+    {
+        var issuesList = request.Issues.Count == 0
+            ? "(kayıtlı bir kriter sorunu yok — genel olarak düşük puan)"
+            : string.Join("\n", request.Issues.Select(i => $"- {i}"));
+
+        return $"""
+            Sen Türkiye Yüzyılı Maarif Modeli'ne göre matematik sorularına düzeltme önerisi veren
+            bir editör danışmanısın. Bu soru Maarif Uyum Puanı {request.MaarifAlignmentScore}/100 ile
+            incelemeye düşmüş; ne olduğunu tekrar etme, DOĞRUDAN nasıl düzeltileceğini öner.
+
+            TESPİT EDİLEN SORUNLAR:
+            {issuesList}
+
+            KURALLAR:
+            1. Somut ve uygulanabilir ol — "kazanıma uygun değil" değil, "şu şekilde değiştirilirse
+               kazanıma uyar" de.
+            2. Yalnızca aşağıdaki [KAYNAK n] bloklarına dayanarak kazanım/olgu iddiası üret.
+            3. Cevabını YALNIZCA submit_revision_recommendation aracını çağırarak ver.
+
+            {BuildGroundingBlock(request.Grounding)}
+            """;
     }
 
     private AiUsage BuildUsage(Message response, Stopwatch stopwatch, AnthropicOptions options)

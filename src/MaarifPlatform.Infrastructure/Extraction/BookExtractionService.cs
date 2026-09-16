@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text.Json;
 using MaarifPlatform.Application.Extraction;
 using MaarifPlatform.Application.Storage;
@@ -15,6 +16,7 @@ public class BookExtractionService(
     MaarifDbContext db,
     IBookFileStorage storage,
     IPdfTextExtractor textExtractor,
+    IPdfPageRenderer pageRenderer,
     IQuestionSegmenter segmenter)
 {
     public async Task<BookExtractionResult> ExtractAsync(Guid bookId, CancellationToken ct = default)
@@ -46,6 +48,7 @@ public class BookExtractionService(
         var blocks = segmenter.Segment(pages);
 
         var lowConfidenceCount = 0;
+        var questionsByPage = new List<(Question Question, int PageNo)>();
 
         foreach (var block in blocks)
         {
@@ -56,6 +59,7 @@ public class BookExtractionService(
                 QuestionNo = block.QuestionNo,
                 Status = QuestionStatus.Extracted
             };
+            questionsByPage.Add((question, block.PageNo));
 
             var version = new QuestionVersion
             {
@@ -99,6 +103,61 @@ public class BookExtractionService(
         book.TotalPages = pages.Count;
         await db.SaveChangesAsync(ct);
 
+        await CaptureOriginalPageImagesAsync(book, questionsByPage, ct);
+        await db.SaveChangesAsync(ct);
+
         return new BookExtractionResult(pages.Count, blocks.Count, lowConfidenceCount);
+    }
+
+    /// <summary>Her sorunun kaynak PDF sayfasını, hiçbir AI çağrısı yapmadan, deterministik bir
+    /// "orijinal görsel" olarak sabitler (BoundingBoxJson=null — tam sayfa kuralı, bkz.
+    /// QuestionVisualAsset). Vision analizi (VisionAnalysisService) artık bu görseli DEĞİŞTİRMEZ;
+    /// yalnızca AI'nin bounding-box tahmini soru meta verisine (VisualType/Description) bilgi
+    /// amaçlı eklenir. Böylece "incelemeye gönderilen görsel" ile "analizden çıkan görsel" arasında
+    /// artık fark olmaz — ikisi de hep aynı, ilk yakalanan sayfa görüntüsüdür.
+    /// Sayfalar TEK belge açma oturumunda (RenderPagesAsync) render edilir — yüzlerce sorulu bir
+    /// kitapta sayfa başına PDF'i baştan açmanın maliyetini önler.</summary>
+    private async Task CaptureOriginalPageImagesAsync(
+        Book book, IReadOnlyList<(Question Question, int PageNo)> questionsByPage, CancellationToken ct)
+    {
+        var distinctPages = questionsByPage.Select(q => q.PageNo).Distinct().OrderBy(p => p).ToList();
+        if (distinctPages.Count == 0)
+        {
+            return;
+        }
+
+        IReadOnlyList<RenderedPage> rendered;
+        await using (var pdfStream = await storage.OpenReadAsync(book.StorageUri, ct))
+        {
+            rendered = await pageRenderer.RenderPagesAsync(pdfStream, distinctPages, ct);
+        }
+
+        var byPageNo = rendered.ToDictionary(r => r.PageNo);
+        var pageIdByNo = await db.BookPages
+            .Where(p => p.BookId == book.Id)
+            .ToDictionaryAsync(p => p.PageNo, p => p.Id, ct);
+
+        foreach (var (question, pageNo) in questionsByPage)
+        {
+            if (!byPageNo.TryGetValue(pageNo, out var page))
+            {
+                continue;
+            }
+
+            var assetHash = Convert.ToHexString(SHA256.HashData(page.PngBytes));
+            var storageUri = await storage.SaveAsync(
+                question.Id, $"page-{pageNo}-original.png", new MemoryStream(page.PngBytes), ct);
+
+            db.QuestionVisualAssets.Add(new QuestionVisualAsset
+            {
+                QuestionId = question.Id,
+                BookPageId = pageIdByNo.GetValueOrDefault(pageNo),
+                StorageUri = storageUri,
+                BoundingBoxJson = null,
+                WidthPx = page.WidthPx,
+                HeightPx = page.HeightPx,
+                AssetHash = assetHash
+            });
+        }
     }
 }

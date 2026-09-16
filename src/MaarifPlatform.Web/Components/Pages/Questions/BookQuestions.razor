@@ -55,6 +55,39 @@ else
                     }
                 }
             </div>
+
+            <div class="card batch-card">
+                <p class="page-intro">
+                    İncelemeye düşmüş (ManualReviewRequired) sorular için AI'dan düzeltme önerisi al —
+                    Maarif Uyum Puanı 50 ve üzeri olanlar otomatik dönüştürülür, altında kalanlar
+                    öneriyle birlikte ayrı bir revizyon raporunda toplanır.
+                </p>
+                <div class="actions">
+                    <button disabled="@_reviewRunning" class="secondary" @onclick="RunReviewBatchAsync">
+                        @(_reviewRunning ? "İşleniyor..." : "İncelemedekileri İşle")
+                    </button>
+                    <a class="btn btn-secondary" href="@($"/export/book/{BookId}/revision-pdf")" target="_blank">Revizyon Raporu PDF</a>
+                </div>
+
+                @if (_reviewRunning || _reviewDone is not null)
+                {
+                    <p class="batch-progress">
+                        İşlendi: @_reviewProcessed / @_reviewTotal
+                        — Dönüştürüldü (≥50): @_reviewTransformed
+                        — Revizyon Raporuna Eklendi (&lt;50): @_reviewExported
+                        — Hatalı: @_reviewFailed
+                    </p>
+                    @if (_reviewErrors.Count > 0)
+                    {
+                        <ul class="batch-errors">
+                            @foreach (var err in _reviewErrors)
+                            {
+                                <li>Soru #@err.QuestionNo: @err.Message</li>
+                            }
+                        </ul>
+                    }
+                }
+            </div>
         </AuthorizeView>
 
         <table>
@@ -99,6 +132,15 @@ else
     private int _batchFailed;
     private int _batchAlreadyDone;
     private List<BatchQuestionResult> _batchErrors = new();
+
+    private bool _reviewRunning;
+    private bool? _reviewDone;
+    private int _reviewTotal;
+    private int _reviewProcessed;
+    private int _reviewTransformed;
+    private int _reviewExported;
+    private int _reviewFailed;
+    private List<ReviewActionResult> _reviewErrors = new();
 
     protected override async Task OnInitializedAsync() => await LoadAsync();
 
@@ -160,6 +202,41 @@ else
 
         _batchRunning = false;
         _batchDone = true;
+        await LoadAsync();
+    }
+
+    private async Task RunReviewBatchAsync()
+    {
+        _reviewRunning = true;
+        _reviewDone = false;
+        _reviewTotal = _questions?.Count(q => q.Status == "ManualReviewRequired") ?? 0;
+        _reviewProcessed = 0;
+        _reviewTransformed = 0;
+        _reviewExported = 0;
+        _reviewFailed = 0;
+        _reviewErrors = new List<ReviewActionResult>();
+        StateHasChanged();
+
+        await using var scope = ScopeFactory.CreateAsyncScope();
+        var batchService = scope.ServiceProvider.GetRequiredService<BookBatchTransformService>();
+
+        await foreach (var result in batchService.ProcessManualReviewAsync(BookId))
+        {
+            _reviewProcessed++;
+            switch (result.Outcome)
+            {
+                case ReviewActionOutcome.TransformedAfterReview: _reviewTransformed++; break;
+                case ReviewActionOutcome.RevisionExported: _reviewExported++; break;
+                case ReviewActionOutcome.Failed:
+                    _reviewFailed++;
+                    _reviewErrors.Add(result);
+                    break;
+            }
+            StateHasChanged();
+        }
+
+        _reviewRunning = false;
+        _reviewDone = true;
         await LoadAsync();
     }
 

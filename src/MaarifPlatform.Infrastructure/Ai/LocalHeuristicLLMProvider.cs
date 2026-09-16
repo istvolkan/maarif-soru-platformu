@@ -126,6 +126,24 @@ public class LocalHeuristicLLMProvider : ILLMProvider
         return Task.FromResult(result);
     }
 
+    public Task<RecommendRevisionResult> RecommendRevisionAsync(RecommendRevisionRequest request, CancellationToken ct = default)
+    {
+        var issuesList = request.Issues.Count == 0
+            ? "belirgin bir sorun kaydedilmemiş"
+            : string.Join("; ", request.Issues);
+
+        var suggestion = $"[MOCK] Maarif Uyum Puanı {request.MaarifAlignmentScore}. " +
+            $"Tespit edilen sorunlar: {issuesList}. Gerçek bir düzeltme önerisi için Ai:Provider=Anthropic kullanın.";
+
+        var result = new RecommendRevisionResult(
+            suggestion, new AiUsage("local-heuristic", "mock-v1", EstimateTokens(request), 60, 0m, 5));
+
+        return Task.FromResult(result);
+    }
+
+    private static int EstimateTokens(RecommendRevisionRequest request) =>
+        (request.OriginalQuestion.Length + request.Issues.Sum(i => i.Length)) / 4;
+
     private static string Truncate(string text, int maxLength) =>
         text.Length <= maxLength ? text : text[..maxLength] + "...";
 

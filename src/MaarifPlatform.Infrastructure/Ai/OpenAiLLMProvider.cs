@@ -99,6 +99,9 @@ public class OpenAiLLMProvider : ILLMProvider
     public Task<GenerateQuestionResult> GenerateQuestionAsync(GenerateQuestionRequest request, CancellationToken ct = default)
         => throw new NotImplementedException("OpenAiLLMProvider şu an yalnızca Judge ikincil sağlayıcısı olarak kullanılıyor (bkz. Sprint 10); Generate implemente edilmedi.");
 
+    public Task<RecommendRevisionResult> RecommendRevisionAsync(RecommendRevisionRequest request, CancellationToken ct = default)
+        => throw new NotImplementedException("OpenAiLLMProvider şu an yalnızca Judge ikincil sağlayıcısı olarak kullanılıyor (bkz. Sprint 10); RecommendRevision implemente edilmedi.");
+
     private static ChatTool BuildEvaluationTool()
     {
         var schema = JsonSerializer.Serialize(new

@@ -1,5 +1,3 @@
-using System.Security.Cryptography;
-using System.Text.Json;
 using MaarifPlatform.Application.Extraction;
 using MaarifPlatform.Application.Storage;
 using MaarifPlatform.Application.Vision;
@@ -8,8 +6,6 @@ using MaarifPlatform.Domain.Enums;
 using MaarifPlatform.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Processing;
 
 namespace MaarifPlatform.Infrastructure.Vision;
 
@@ -19,12 +15,15 @@ public sealed record VisionAnalysisResult(
     IReadOnlyList<VisualWarning> ValidationWarnings);
 
 /// <summary>§3/§6/§9/§10 Vision analiz orkestrasyonu: routing kararı → (gerekirse) sayfa render →
-/// asset cache/persist → birincil provider çağrısı → deterministik doğrulama → (düşük güvende)
-/// ikincil provider ile konsensüs kontrolü. Kendi <c>SaveChangesAsync</c>'ini ÇALIŞTIRMAZ —
-/// entity'leri DbContext'e ekler, commit çağıranın (AnalysisOrchestrationService) tek
-/// transaction'ına bırakılır. requires_visual=false ise hiçbir DB/PDF/Vision işlemi yapmadan
-/// erken döner — mevcut metin-only akışı bu servisin varlığından etkilenmez.
-/// SecondaryProvider config'te boşsa consensus akışı tamamen devre dışıdır (ek maliyet yok).</summary>
+/// birincil provider çağrısı → deterministik doğrulama → (düşük güvende) ikincil provider ile
+/// konsensüs kontrolü. Görsel DOSYASI artık burada üretilmez/kaydedilmez — o iş tamamen
+/// BookExtractionService.CaptureOriginalPageImagesAsync'e ait (AI'ya hiç gitmeden, extraction
+/// anında sabitlenen tek "orijinal görsel"). Bu servis yalnızca metin metadata'sı (VisualType,
+/// Description, Elements vb.) üretir. Kendi <c>SaveChangesAsync</c>'ini ÇALIŞTIRMAZ — entity'leri
+/// DbContext'e ekler, commit çağıranın (AnalysisOrchestrationService) tek transaction'ına
+/// bırakılır. requires_visual=false ise hiçbir DB/PDF/Vision işlemi yapmadan erken döner —
+/// mevcut metin-only akışı bu servisin varlığından etkilenmez. SecondaryProvider config'te
+/// boşsa consensus akışı tamamen devre dışıdır (ek maliyet yok).</summary>
 public class VisionAnalysisService(
     MaarifDbContext db,
     IBookFileStorage storage,
@@ -59,61 +58,14 @@ public class VisionAnalysisService(
             rendered.PngBytes, originalDna.OriginalQuestion ?? string.Empty, ct);
         var validationWarnings = (await primaryProvider.ValidateVisualStructureAsync(primaryObservation, ct)).ToList();
 
-        // Model bu sorunun asıl şeklini/diyagramını çevreleyen bir bounding_box döndürdüyse, insan
-        // okuyucuya (Soru Detayı + PDF export) TAM SAYFA ekran görüntüsü yerine sadece o şekli
-        // gösterebilmek için burada kırpılır. Kutu yoksa/geçersizse (VisualCropCalculator null
-        // döner) önceki davranış korunur: tam sayfa görüntüsü olduğu gibi saklanır — bu durumda
-        // BoundingBoxJson null kalır, PDF export bunu bir "gerçek şekil" olarak GÖSTERMEMELİDİR
-        // (bkz. BookPdfExportService), çünkü tüm sayfayı küçültülmüş halde basmak okunaksızdır.
-        var cropRect = VisualCropCalculator.Compute(primaryObservation.BoundingBox, rendered.WidthPx, rendered.HeightPx);
-
-        byte[] assetBytes;
-        int assetWidth;
-        int assetHeight;
-        string? boundingBoxJson;
-
-        if (cropRect is not null)
-        {
-            using var pageImage = Image.Load(rendered.PngBytes);
-            pageImage.Mutate(x => x.Crop(new Rectangle(cropRect.X, cropRect.Y, cropRect.Width, cropRect.Height)));
-            using var cropStream = new MemoryStream();
-            await pageImage.SaveAsPngAsync(cropStream, ct);
-            assetBytes = cropStream.ToArray();
-            assetWidth = cropRect.Width;
-            assetHeight = cropRect.Height;
-            boundingBoxJson = JsonSerializer.Serialize(primaryObservation.BoundingBox);
-        }
-        else
-        {
-            assetBytes = rendered.PngBytes;
-            assetWidth = rendered.WidthPx;
-            assetHeight = rendered.HeightPx;
-            boundingBoxJson = null;
-        }
-
-        var assetHash = Convert.ToHexString(SHA256.HashData(assetBytes));
-
-        // §26 cache: aynı görüntü bu soru için zaten kaydedilmişse tekrar diske yazma.
-        var alreadyStored = await db.QuestionVisualAssets
-            .AnyAsync(a => a.QuestionId == question.Id && a.AssetHash == assetHash, ct);
-
-        if (!alreadyStored)
-        {
-            var fileSuffix = cropRect is not null ? $"page-{originalDna.SourcePage}-crop.png" : $"page-{originalDna.SourcePage}.png";
-            var storageUri = await storage.SaveAsync(question.Id, fileSuffix, new MemoryStream(assetBytes), ct);
-
-            db.QuestionVisualAssets.Add(new QuestionVisualAsset
-            {
-                QuestionId = question.Id,
-                BookPageId = question.BookPageId,
-                StorageUri = storageUri,
-                BoundingBoxJson = boundingBoxJson,
-                WidthPx = assetWidth,
-                HeightPx = assetHeight,
-                AssetHash = assetHash
-            });
-        }
-
+        // §elestiri: Soru Detayı/PDF export'ta gösterilen görsel artık BURADA üretilmez —
+        // BookExtractionService.CaptureOriginalPageImagesAsync ile AI'ya hiç gitmeden, deterministik
+        // olarak zaten sabitlenmiş (bkz. QuestionVisualAsset, BoundingBoxJson=null). Vision'ın
+        // ürettiği bounding_box'ı bir önceki sürümde her Analyze çalıştığında YENİ bir kırpılmış
+        // asset olarak kaydediyorduk (en son CreatedAt kazanıyordu) — bu, "incelemeye gönderilen
+        // görsel" ile "analizden çıkan görsel" arasında sürekli kayan bir farka yol açıyordu.
+        // primaryObservation.BoundingBox hâlâ QuestionDna'ya (VisualType/Description/Elements vb.)
+        // bilgi amaçlı akıyor, yalnızca ayrı bir görsel dosyası artık ÜRETİLMİYOR.
         RecordVisionRun(question.Id, primaryProvider.Name, primaryObservation.Usage);
 
         // §9/§10: yalnızca birincil güven eşiğin altındaysa VE bir ikincil sağlayıcı

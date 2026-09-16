@@ -91,6 +91,21 @@ app.MapGet("/export/book/{bookId:guid}/pdf", async (Guid bookId, BookPdfExportSe
     return Results.File(pdfBytes, "application/pdf", fileName);
 }).RequireAuthorization();
 
+// Maarif Uyum Puanı 50 altında kalıp otomatik Transform'a gönderilmeyen sorular için ayrı
+// revizyon raporu (bkz. BookBatchTransformService.ProcessManualReviewAsync).
+app.MapGet("/export/book/{bookId:guid}/revision-pdf", async (Guid bookId, BookPdfExportService exportService, MaarifDbContext db, CancellationToken ct) =>
+{
+    var book = await db.Books.FirstOrDefaultAsync(b => b.Id == bookId, ct);
+    if (book is null)
+    {
+        return Results.NotFound();
+    }
+
+    var pdfBytes = await exportService.GenerateRevisionReportAsync(bookId, ct);
+    var fileName = $"{book.Title}-revizyon-raporu.pdf".Replace(' ', '-');
+    return Results.File(pdfBytes, "application/pdf", fileName);
+}).RequireAuthorization();
+
 // Soru için PDF'ten çıkarılmış görsel (grafik/şekil sayfası) — QuestionDetail.razor'daki <img>
 // buraya işaret eder. Görsel yoksa (RequiresVisual=false ya da hiç render edilmemişse) 404.
 app.MapGet("/media/question/{questionId:guid}/visual", async (Guid questionId, MaarifDbContext db, IBookFileStorage storage, CancellationToken ct) =>

@@ -20,6 +20,8 @@ public sealed record TransformationSummary(
     AiUsage? TransformUsage,
     AiUsage? JudgeUsage);
 
+public sealed record RevisionRecommendation(int Score, TransformationLevel Level, string Suggestion);
+
 /// <summary>§5/§6/§8 Transformation + Quality Judge orkestrasyonu: Analyzed versiyonu yükle →
 /// TransformationLevel'i TransformationMode'a çevir (bkz. TransformationModeMapper) →
 /// NoChange/LightEdit ise LLM'e hiç gitmeden AiApproved'a geç → aksi halde
@@ -46,10 +48,14 @@ public class TransformationOrchestrationService(
         var question = await db.Questions.FirstOrDefaultAsync(q => q.Id == questionId, ct)
             ?? throw new InvalidOperationException($"Soru bulunamadı: {questionId}");
 
-        if (question.Status != QuestionStatus.Analyzed)
+        // ManualReviewRequired da kabul edilir: RecommendRevisionAsync ile Maarif Uyum Puanı >= 50
+        // bulunan incelemedeki sorular, editör onayı beklemeden doğrudan Transform'a gönderilebilir
+        // (bkz. BookBatchTransformService.ProcessManualReviewAsync) — geri kalan alt akış (Analyzed
+        // versiyonu okuma, TransformationLevel'e göre karar) hiç değişmez.
+        if (question.Status != QuestionStatus.Analyzed && question.Status != QuestionStatus.ManualReviewRequired)
         {
             throw new InvalidOperationException(
-                $"Soru Transform için uygun durumda değil (Status={question.Status}, Analyzed bekleniyor).");
+                $"Soru Transform için uygun durumda değil (Status={question.Status}, Analyzed veya ManualReviewRequired bekleniyor).");
         }
 
         var analyzedVersion = await db.QuestionVersions
@@ -206,6 +212,65 @@ public class TransformationOrchestrationService(
 
         return new TransformationSummary(level.ToString(), decision.ToString(), Skipped: false,
             evalResult.QualityScore, evalResult.Passed, transformResult.Usage, evalResult.Usage);
+    }
+
+    /// <summary>ManualReviewRequired'a düşmüş (henüz Transform'a girmemiş) bir soru için AI'dan
+    /// aksiyona dönük bir düzeltme önerisi alır ve QuestionDna.ExtensionsJson içine yerinde yazar
+    /// (§elestiri madde 12 — henüz olgunlaşmamış alan, migration gerektirmez). Skoru da döner ki
+    /// çağıran (BookBatchTransformService) eşik kararını (PDF mi, Transform mi) burada tekrar
+    /// sorgu atmadan verebilsin.</summary>
+    public async Task<RevisionRecommendation> RecommendRevisionAsync(Guid questionId, CancellationToken ct = default)
+    {
+        var llmProvider = providerFactory.Get(aiRouting.CurrentValue.Provider);
+
+        var question = await db.Questions.FirstOrDefaultAsync(q => q.Id == questionId, ct)
+            ?? throw new InvalidOperationException($"Soru bulunamadı: {questionId}");
+
+        if (question.Status != QuestionStatus.ManualReviewRequired)
+        {
+            throw new InvalidOperationException(
+                $"Soru revizyon önerisi için uygun durumda değil (Status={question.Status}, ManualReviewRequired bekleniyor).");
+        }
+
+        var analyzedVersion = await db.QuestionVersions
+            .Include(v => v.Dna)
+            .Where(v => v.QuestionId == questionId && v.Stage == QuestionVersionStage.Analyzed)
+            .OrderByDescending(v => v.VersionNo)
+            .FirstOrDefaultAsync(ct)
+            ?? throw new InvalidOperationException("Sorunun Analyzed versiyonu bulunamadı.");
+
+        var dna = analyzedVersion.Dna
+            ?? throw new InvalidOperationException("Analyzed versiyonun Question DNA kaydı yok.");
+
+        var score = dna.MaarifAlignmentScore ?? 0;
+        var level = dna.TransformationLevel
+            ?? throw new InvalidOperationException("TransformationLevel hesaplanmamış.");
+        var issues = string.IsNullOrWhiteSpace(dna.AlignmentIssuesJson)
+            ? []
+            : JsonSerializer.Deserialize<List<string>>(dna.AlignmentIssuesJson) ?? [];
+
+        var searchResults = await searchService.SearchAsync(
+            dna.OriginalQuestion ?? string.Empty, topK: 5,
+            grade: dna.Grade is null or 0 ? null : dna.Grade,
+            subject: string.IsNullOrEmpty(dna.Subject) ? null : dna.Subject, ct: ct);
+        var grounding = searchResults
+            .Select(r => new GroundingReference(r.ReferenceDocumentId, r.Page, r.SectionPath, r.ChunkText))
+            .ToList();
+
+        var request = new RecommendRevisionRequest(dna.OriginalQuestion ?? string.Empty, score, issues, grounding);
+        var result = await llmProvider.RecommendRevisionAsync(request, ct);
+
+        db.AiRuns.Add(BuildAiRun(questionId, PipelineStage.Analysis, result.Usage, llmProvider.Name));
+
+        var extensions = string.IsNullOrWhiteSpace(dna.ExtensionsJson)
+            ? new Dictionary<string, string>()
+            : JsonSerializer.Deserialize<Dictionary<string, string>>(dna.ExtensionsJson) ?? new();
+        extensions["revisionSuggestion"] = result.RevisionSuggestion;
+        dna.ExtensionsJson = JsonSerializer.Serialize(extensions);
+
+        await db.SaveChangesAsync(ct);
+
+        return new RevisionRecommendation(score, level, result.RevisionSuggestion);
     }
 
     /// <summary>ManualReviewRequired'a düşen bir soru için editörün elle verdiği karar —
