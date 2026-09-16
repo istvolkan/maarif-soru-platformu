@@ -55,8 +55,12 @@ public class BookPdfExportService(MaarifDbContext db, IBookFileStorage storage)
             var question = await db.Questions.FirstAsync(q => q.Id == questionId, ct);
 
             byte[]? visualImage = null;
+            // Yalnızca gerçek bir şekil kırpımı (BoundingBoxJson dolu) basılır. Kırpma yoksa
+            // saklanan varlık tüm sayfanın ham ekran görüntüsüdür (bkz. VisionAnalysisService) —
+            // bunu küçük bir kutuya sıkıştırıp basmak, tüm sayfayı (başka sorular dahil) okunaksız
+            // bir minyatür olarak göstermek anlamına gelir; o yüzden bilinçli olarak atlanır.
             var visualAsset = await db.QuestionVisualAssets
-                .Where(a => a.QuestionId == questionId)
+                .Where(a => a.QuestionId == questionId && a.BoundingBoxJson != null)
                 .OrderByDescending(a => a.CreatedAt)
                 .FirstOrDefaultAsync(ct);
             if (visualAsset is not null)

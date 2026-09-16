@@ -54,9 +54,15 @@ public class AnthropicVisionProvider : IVisionProvider
 
     public Task<VisualObservation> AnalyzeQuestionImageAsync(byte[] questionImagePng, string questionText, CancellationToken ct = default) =>
         CallAnthropicAsync(questionImagePng,
-            $"Bu, aşağıdaki soruya ait bir görseldir. Soru metni: \"{questionText}\"\n" +
+            $"Bu, aşağıdaki soruyu içeren ders kitabı SAYFASININ TAM görüntüsüdür (yalnızca soruya " +
+            $"kırpılmış değildir — sayfada başka sorular/metinler de olabilir). Soru metni: \"{questionText}\"\n" +
             "Görseldeki öğeleri ve aralarındaki ilişkileri, soru metninin atıfta bulunduğu etiketlere " +
-            "(nokta/kenar/açı isimleri vb.) sadık kalarak çıkar.", ct);
+            "(nokta/kenar/açı isimleri vb.) sadık kalarak çıkar. Ayrıca bounding_box alanında, bu soruya " +
+            "ait asıl şekli/diyagramı/grafiği (metin değil, yalnızca görsel öğeyi) sıkıca çevreleyen " +
+            "dikdörtgeni, sayfanın tam genişlik/yüksekliğine göre 0.0-1.0 arası normalize edilmiş " +
+            "{x, y, width, height} olarak bildir (x/y sol-üst köşe). Sayfada bu soruya ait ayırt " +
+            "edilebilir bir şekil/diyagram YOKSA (örn. görsel yalnızca metin veya soru tablo/formül " +
+            "içermiyor) bounding_box alanını tamamen atla.", ct);
 
     public Task<VisualObservation> ExtractVisualStructureAsync(byte[] imagePng, string visualType, CancellationToken ct = default) =>
         CallAnthropicAsync(imagePng,
@@ -170,6 +176,20 @@ public class AnthropicVisionProvider : IVisionProvider
             ["visual_text"] = Schema("array", "Görseldeki metinler."),
             ["symbols"] = Schema("array", "Görseldeki semboller."),
             ["measurements"] = Schema("array", "Görseldeki ölçüm ifadeleri."),
+            ["bounding_box"] = JsonSerializer.SerializeToElement(new
+            {
+                type = "object",
+                description = "Sayfadaki asıl şekli/diyagramı çevreleyen, 0.0-1.0 normalize dikdörtgen. " +
+                    "Ayırt edilebilir bir şekil yoksa bu alanı tamamen atla.",
+                properties = new
+                {
+                    x = new { type = "number" },
+                    y = new { type = "number" },
+                    width = new { type = "number" },
+                    height = new { type = "number" }
+                },
+                required = new[] { "x", "y", "width", "height" }
+            }),
             ["warnings"] = JsonSerializer.SerializeToElement(new
             {
                 type = "array",
@@ -261,6 +281,13 @@ public class AnthropicVisionProvider : IVisionProvider
                 ? arr.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.String).Select(x => x.GetString()!).ToList()
                 : [];
 
+        VisualBoundingBox? boundingBox = null;
+        if (input.TryGetValue("bounding_box", out var bboxEl) && bboxEl.ValueKind == JsonValueKind.Object)
+        {
+            boundingBox = new VisualBoundingBox(
+                GetElDecimal(bboxEl, "x"), GetElDecimal(bboxEl, "y"), GetElDecimal(bboxEl, "width"), GetElDecimal(bboxEl, "height"));
+        }
+
         return new VisualObservation(
             VisualType: GetString("visual_type"),
             Description: GetString("description"),
@@ -271,6 +298,7 @@ public class AnthropicVisionProvider : IVisionProvider
             Symbols: GetStringArray("symbols"),
             Measurements: GetStringArray("measurements"),
             Warnings: warnings,
-            Usage: usage);
+            Usage: usage,
+            BoundingBox: boundingBox);
     }
 }

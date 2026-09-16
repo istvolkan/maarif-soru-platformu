@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Text.Json;
 using MaarifPlatform.Application.Extraction;
 using MaarifPlatform.Application.Storage;
 using MaarifPlatform.Application.Vision;
@@ -7,6 +8,8 @@ using MaarifPlatform.Domain.Enums;
 using MaarifPlatform.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Processing;
 
 namespace MaarifPlatform.Infrastructure.Vision;
 
@@ -51,7 +54,44 @@ public class VisionAnalysisService(
         await using var pdfStream = await storage.OpenReadAsync(book.StorageUri, ct);
         var rendered = await pageRenderer.RenderPageAsync(pdfStream, originalDna.SourcePage.Value, ct);
 
-        var assetHash = Convert.ToHexString(SHA256.HashData(rendered.PngBytes));
+        var primaryProvider = providerFactory.Get(routing.Provider);
+        var primaryObservation = await primaryProvider.AnalyzeQuestionImageAsync(
+            rendered.PngBytes, originalDna.OriginalQuestion ?? string.Empty, ct);
+        var validationWarnings = (await primaryProvider.ValidateVisualStructureAsync(primaryObservation, ct)).ToList();
+
+        // Model bu sorunun asıl şeklini/diyagramını çevreleyen bir bounding_box döndürdüyse, insan
+        // okuyucuya (Soru Detayı + PDF export) TAM SAYFA ekran görüntüsü yerine sadece o şekli
+        // gösterebilmek için burada kırpılır. Kutu yoksa/geçersizse (VisualCropCalculator null
+        // döner) önceki davranış korunur: tam sayfa görüntüsü olduğu gibi saklanır — bu durumda
+        // BoundingBoxJson null kalır, PDF export bunu bir "gerçek şekil" olarak GÖSTERMEMELİDİR
+        // (bkz. BookPdfExportService), çünkü tüm sayfayı küçültülmüş halde basmak okunaksızdır.
+        var cropRect = VisualCropCalculator.Compute(primaryObservation.BoundingBox, rendered.WidthPx, rendered.HeightPx);
+
+        byte[] assetBytes;
+        int assetWidth;
+        int assetHeight;
+        string? boundingBoxJson;
+
+        if (cropRect is not null)
+        {
+            using var pageImage = Image.Load(rendered.PngBytes);
+            pageImage.Mutate(x => x.Crop(new Rectangle(cropRect.X, cropRect.Y, cropRect.Width, cropRect.Height)));
+            using var cropStream = new MemoryStream();
+            await pageImage.SaveAsPngAsync(cropStream, ct);
+            assetBytes = cropStream.ToArray();
+            assetWidth = cropRect.Width;
+            assetHeight = cropRect.Height;
+            boundingBoxJson = JsonSerializer.Serialize(primaryObservation.BoundingBox);
+        }
+        else
+        {
+            assetBytes = rendered.PngBytes;
+            assetWidth = rendered.WidthPx;
+            assetHeight = rendered.HeightPx;
+            boundingBoxJson = null;
+        }
+
+        var assetHash = Convert.ToHexString(SHA256.HashData(assetBytes));
 
         // §26 cache: aynı görüntü bu soru için zaten kaydedilmişse tekrar diske yazma.
         var alreadyStored = await db.QuestionVisualAssets
@@ -59,24 +99,20 @@ public class VisionAnalysisService(
 
         if (!alreadyStored)
         {
-            var storageUri = await storage.SaveAsync(
-                question.Id, $"page-{originalDna.SourcePage}.png", new MemoryStream(rendered.PngBytes), ct);
+            var fileSuffix = cropRect is not null ? $"page-{originalDna.SourcePage}-crop.png" : $"page-{originalDna.SourcePage}.png";
+            var storageUri = await storage.SaveAsync(question.Id, fileSuffix, new MemoryStream(assetBytes), ct);
 
             db.QuestionVisualAssets.Add(new QuestionVisualAsset
             {
                 QuestionId = question.Id,
                 BookPageId = question.BookPageId,
                 StorageUri = storageUri,
-                WidthPx = rendered.WidthPx,
-                HeightPx = rendered.HeightPx,
+                BoundingBoxJson = boundingBoxJson,
+                WidthPx = assetWidth,
+                HeightPx = assetHeight,
                 AssetHash = assetHash
             });
         }
-
-        var primaryProvider = providerFactory.Get(routing.Provider);
-        var primaryObservation = await primaryProvider.AnalyzeQuestionImageAsync(
-            rendered.PngBytes, originalDna.OriginalQuestion ?? string.Empty, ct);
-        var validationWarnings = (await primaryProvider.ValidateVisualStructureAsync(primaryObservation, ct)).ToList();
 
         RecordVisionRun(question.Id, primaryProvider.Name, primaryObservation.Usage);
 

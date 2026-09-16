@@ -49,6 +49,10 @@
                 </select>
                 <button type="button" class="secondary" disabled="@_loadingAnthropicModels" @onclick="LoadAnthropicModelsAsync">@(_loadingAnthropicModels ? "Yükleniyor…" : "Modelleri Getir")</button>
             </div>
+            @if (_anthropicModelsError is not null)
+            {
+                <p class="error model-field-error">@_anthropicModelsError</p>
+            }
         </div>
         <div class="field"><label>Anthropic Max Tokens</label><InputNumber @bind-Value="_form.AnthropicMaxTokens" /></div>
     </fieldset>
@@ -77,6 +81,10 @@
                 </select>
                 <button type="button" class="secondary" disabled="@_loadingOpenAiModels" @onclick="LoadOpenAiModelsAsync">@(_loadingOpenAiModels ? "Yükleniyor…" : "Modelleri Getir")</button>
             </div>
+            @if (_openAiModelsError is not null)
+            {
+                <p class="error model-field-error">@_openAiModelsError</p>
+            }
         </div>
         <div class="field"><label>OpenAI Max Tokens</label><InputNumber @bind-Value="_form.OpenAiMaxTokens" /></div>
         <div class="field"><label>Consensus Güven Eşiği (0-1)</label><InputNumber @bind-Value="_form.JudgeConsensusConfidenceThreshold" step="0.05" /></div>
@@ -115,9 +123,30 @@
                 </select>
                 <button type="button" class="secondary" disabled="@_loadingGeminiModels" @onclick="LoadGeminiModelsAsync">@(_loadingGeminiModels ? "Yükleniyor…" : "Modelleri Getir")</button>
             </div>
+            @if (_geminiModelsError is not null)
+            {
+                <p class="error model-field-error">@_geminiModelsError</p>
+            }
         </div>
         <div class="field"><label>Vision Anthropic API Key @KeyStatus(_hasVisionAnthropicKey)</label><InputText @bind-Value="_form.VisionAnthropicApiKey" type="password" placeholder="değiştirmek için doldurun" /></div>
-        <div class="field"><label>Vision Anthropic Model</label><InputText @bind-Value="_form.VisionAnthropicModel" /></div>
+        <div class="field">
+            <label>Vision Anthropic Model</label>
+            <div class="model-field">
+                <InputText @bind-Value="_form.VisionAnthropicModel" />
+                <select @onchange="e => _form.VisionAnthropicModel = e.Value?.ToString() ?? _form.VisionAnthropicModel">
+                    <option value="">— listeden seç —</option>
+                    @foreach (var m in _visionAnthropicModels)
+                    {
+                        <option value="@m.Id" selected="@(m.Id == _form.VisionAnthropicModel)">@(m.DisplayName ?? m.Id)</option>
+                    }
+                </select>
+                <button type="button" class="secondary" disabled="@_loadingVisionAnthropicModels" @onclick="LoadVisionAnthropicModelsAsync">@(_loadingVisionAnthropicModels ? "Yükleniyor…" : "Modelleri Getir")</button>
+            </div>
+            @if (_visionAnthropicModelsError is not null)
+            {
+                <p class="error model-field-error">@_visionAnthropicModelsError</p>
+            }
+        </div>
         <div class="field"><label>Consensus Güven Eşiği (0-1)</label><InputNumber @bind-Value="_form.VisionConsensusConfidenceThreshold" step="0.05" /></div>
     </fieldset>
 
@@ -131,7 +160,24 @@
             </InputSelect>
         </div>
         <div class="field"><label>OpenAI API Key @KeyStatus(_hasEmbeddingsKey)</label><InputText @bind-Value="_form.EmbeddingsApiKey" type="password" placeholder="değiştirmek için doldurun" /></div>
-        <div class="field"><label>OpenAI Model</label><InputText @bind-Value="_form.EmbeddingsModel" /></div>
+        <div class="field">
+            <label>OpenAI Model</label>
+            <div class="model-field">
+                <InputText @bind-Value="_form.EmbeddingsModel" />
+                <select @onchange="e => _form.EmbeddingsModel = e.Value?.ToString() ?? _form.EmbeddingsModel">
+                    <option value="">— listeden seç —</option>
+                    @foreach (var m in _embeddingModels)
+                    {
+                        <option value="@m.Id" selected="@(m.Id == _form.EmbeddingsModel)">@(m.DisplayName ?? m.Id)</option>
+                    }
+                </select>
+                <button type="button" class="secondary" disabled="@_loadingEmbeddingModels" @onclick="LoadEmbeddingModelsAsync">@(_loadingEmbeddingModels ? "Yükleniyor…" : "Modelleri Getir")</button>
+            </div>
+            @if (_embeddingModelsError is not null)
+            {
+                <p class="error model-field-error">@_embeddingModelsError</p>
+            }
+        </div>
         <p class="note">Not: Embeddings burada canlı yeniden yükleme kapsamı dışındadır (bkz. README) — değişiklik için uygulama yeniden başlatılmalıdır.</p>
     </fieldset>
 
@@ -178,7 +224,10 @@
     private List<ProviderModelOption> _anthropicModels = new();
     private List<ProviderModelOption> _openAiModels = new();
     private List<ProviderModelOption> _geminiModels = new();
-    private bool _loadingAnthropicModels, _loadingOpenAiModels, _loadingGeminiModels;
+    private List<ProviderModelOption> _visionAnthropicModels = new();
+    private List<ProviderModelOption> _embeddingModels = new();
+    private bool _loadingAnthropicModels, _loadingOpenAiModels, _loadingGeminiModels, _loadingVisionAnthropicModels, _loadingEmbeddingModels;
+    private string? _anthropicModelsError, _openAiModelsError, _geminiModelsError, _visionAnthropicModelsError, _embeddingModelsError;
 
     protected override void OnInitialized()
     {
@@ -212,7 +261,7 @@
     private async Task LoadAnthropicModelsAsync()
     {
         _loadingAnthropicModels = true;
-        _error = null;
+        _anthropicModelsError = null;
         try
         {
             await using var scope = ScopeFactory.CreateAsyncScope();
@@ -221,7 +270,7 @@
         }
         catch (Exception ex)
         {
-            _error = ex.Message;
+            _anthropicModelsError = ex.Message;
         }
         finally
         {
@@ -232,7 +281,7 @@
     private async Task LoadOpenAiModelsAsync()
     {
         _loadingOpenAiModels = true;
-        _error = null;
+        _openAiModelsError = null;
         try
         {
             await using var scope = ScopeFactory.CreateAsyncScope();
@@ -241,7 +290,7 @@
         }
         catch (Exception ex)
         {
-            _error = ex.Message;
+            _openAiModelsError = ex.Message;
         }
         finally
         {
@@ -252,7 +301,7 @@
     private async Task LoadGeminiModelsAsync()
     {
         _loadingGeminiModels = true;
-        _error = null;
+        _geminiModelsError = null;
         try
         {
             await using var scope = ScopeFactory.CreateAsyncScope();
@@ -261,11 +310,51 @@
         }
         catch (Exception ex)
         {
-            _error = ex.Message;
+            _geminiModelsError = ex.Message;
         }
         finally
         {
             _loadingGeminiModels = false;
+        }
+    }
+
+    private async Task LoadVisionAnthropicModelsAsync()
+    {
+        _loadingVisionAnthropicModels = true;
+        _visionAnthropicModelsError = null;
+        try
+        {
+            await using var scope = ScopeFactory.CreateAsyncScope();
+            var catalog = scope.ServiceProvider.GetRequiredService<ProviderModelCatalogService>();
+            _visionAnthropicModels = (await catalog.ListVisionAnthropicModelsAsync(_form.VisionAnthropicApiKey)).ToList();
+        }
+        catch (Exception ex)
+        {
+            _visionAnthropicModelsError = ex.Message;
+        }
+        finally
+        {
+            _loadingVisionAnthropicModels = false;
+        }
+    }
+
+    private async Task LoadEmbeddingModelsAsync()
+    {
+        _loadingEmbeddingModels = true;
+        _embeddingModelsError = null;
+        try
+        {
+            await using var scope = ScopeFactory.CreateAsyncScope();
+            var catalog = scope.ServiceProvider.GetRequiredService<ProviderModelCatalogService>();
+            _embeddingModels = (await catalog.ListEmbeddingModelsAsync(_form.EmbeddingsApiKey)).ToList();
+        }
+        catch (Exception ex)
+        {
+            _embeddingModelsError = ex.Message;
+        }
+        finally
+        {
+            _loadingEmbeddingModels = false;
         }
     }
 

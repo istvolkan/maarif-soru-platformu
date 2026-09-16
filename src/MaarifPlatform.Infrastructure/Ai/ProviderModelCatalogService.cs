@@ -2,6 +2,7 @@ using System.Net.Http.Json;
 using System.Text.Json.Serialization;
 using Anthropic;
 using Anthropic.Models.Models;
+using MaarifPlatform.Infrastructure.Rag;
 using MaarifPlatform.Infrastructure.Vision;
 using Microsoft.Extensions.Options;
 using OpenAI.Models;
@@ -19,12 +20,21 @@ public sealed record ProviderModelOption(string Id, string? DisplayName);
 public class ProviderModelCatalogService(
     HttpClient httpClient,
     IOptionsMonitor<AnthropicOptions> anthropicOptions,
+    IOptionsMonitor<AnthropicVisionOptions> anthropicVisionOptions,
     IOptionsMonitor<OpenAiOptions> openAiOptions,
+    IOptions<OpenAIEmbeddingOptions> embeddingOptions,
     IOptionsMonitor<GeminiOptions> geminiOptions)
 {
-    public async Task<IReadOnlyList<ProviderModelOption>> ListAnthropicModelsAsync(string? apiKeyOverride, CancellationToken ct = default)
+    public Task<IReadOnlyList<ProviderModelOption>> ListAnthropicModelsAsync(string? apiKeyOverride, CancellationToken ct = default) =>
+        ListAnthropicModelsCoreAsync(
+            string.IsNullOrWhiteSpace(apiKeyOverride) ? anthropicOptions.CurrentValue.ApiKey : apiKeyOverride, ct);
+
+    public Task<IReadOnlyList<ProviderModelOption>> ListVisionAnthropicModelsAsync(string? apiKeyOverride, CancellationToken ct = default) =>
+        ListAnthropicModelsCoreAsync(
+            string.IsNullOrWhiteSpace(apiKeyOverride) ? anthropicVisionOptions.CurrentValue.ApiKey : apiKeyOverride, ct);
+
+    private static async Task<IReadOnlyList<ProviderModelOption>> ListAnthropicModelsCoreAsync(string? apiKey, CancellationToken ct)
     {
-        var apiKey = string.IsNullOrWhiteSpace(apiKeyOverride) ? anthropicOptions.CurrentValue.ApiKey : apiKeyOverride;
         if (string.IsNullOrWhiteSpace(apiKey))
         {
             throw new InvalidOperationException("Model listesini çekmek için önce bir Anthropic API anahtarı girin.");
@@ -55,14 +65,33 @@ public class ProviderModelCatalogService(
             throw new InvalidOperationException("Model listesini çekmek için önce bir OpenAI API anahtarı girin.");
         }
 
-        var client = new OpenAIModelClient(apiKey);
-        var result = await client.GetModelsAsync(ct);
-
         // Judge sağlayıcısı sohbet/tool-calling modeli bekliyor — embedding/ses/moderasyon
         // modelleri (aynı hesabın döndürdüğü katalogda hepsi karışık gelir) burada elenir.
         var excluded = new[] { "embedding", "whisper", "tts", "dall-e", "moderation", "davinci", "babbage" };
+        return await ListOpenAiModelsCoreAsync(apiKey, m => !excluded.Any(x => m.Contains(x, StringComparison.OrdinalIgnoreCase)), ct);
+    }
+
+    public async Task<IReadOnlyList<ProviderModelOption>> ListEmbeddingModelsAsync(string? apiKeyOverride, CancellationToken ct = default)
+    {
+        var apiKey = string.IsNullOrWhiteSpace(apiKeyOverride) ? embeddingOptions.Value.ApiKey : apiKeyOverride;
+        if (string.IsNullOrWhiteSpace(apiKey))
+        {
+            throw new InvalidOperationException("Model listesini çekmek için önce bir OpenAI API anahtarı girin.");
+        }
+
+        // Embeddings alanı yalnızca embedding modelleri bekliyor — burada tam tersi filtre
+        // uygulanır (Judge'ın chat/tool-calling filtresinin aynası).
+        return await ListOpenAiModelsCoreAsync(apiKey, m => m.Contains("embedding", StringComparison.OrdinalIgnoreCase), ct);
+    }
+
+    private static async Task<IReadOnlyList<ProviderModelOption>> ListOpenAiModelsCoreAsync(
+        string apiKey, Func<string, bool> idFilter, CancellationToken ct)
+    {
+        var client = new OpenAIModelClient(apiKey);
+        var result = await client.GetModelsAsync(ct);
+
         return result.Value
-            .Where(m => !excluded.Any(x => m.Id.Contains(x, StringComparison.OrdinalIgnoreCase)))
+            .Where(m => idFilter(m.Id))
             .OrderByDescending(m => m.CreatedAt)
             .Select(m => new ProviderModelOption(m.Id, null))
             .ToList();

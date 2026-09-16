@@ -24,9 +24,15 @@ public class GeminiVisionProvider(HttpClient httpClient, IOptionsMonitor<GeminiO
 
     public Task<VisualObservation> AnalyzeQuestionImageAsync(byte[] questionImagePng, string questionText, CancellationToken ct = default) =>
         CallGeminiAsync(questionImagePng,
-            $"Bu, aşağıdaki soruya ait bir görseldir. Soru metni: \"{questionText}\"\n" +
+            $"Bu, aşağıdaki soruyu içeren ders kitabı SAYFASININ TAM görüntüsüdür (yalnızca soruya " +
+            $"kırpılmış değildir — sayfada başka sorular/metinler de olabilir). Soru metni: \"{questionText}\"\n" +
             "Görseldeki öğeleri ve aralarındaki ilişkileri, soru metninin atıfta bulunduğu etiketlere " +
-            "(nokta/kenar/açı isimleri vb.) sadık kalarak çıkar.", ct);
+            "(nokta/kenar/açı isimleri vb.) sadık kalarak çıkar. Ayrıca bounding_box alanında, bu soruya " +
+            "ait asıl şekli/diyagramı/grafiği (metin değil, yalnızca görsel öğeyi) sıkıca çevreleyen " +
+            "dikdörtgeni, sayfanın tam genişlik/yüksekliğine göre 0.0-1.0 arası normalize edilmiş " +
+            "{x, y, width, height} olarak bildir (x/y sol-üst köşe). Sayfada bu soruya ait ayırt " +
+            "edilebilir bir şekil/diyagram YOKSA (örn. görsel yalnızca metin veya soru tablo/formül " +
+            "içermiyor) bounding_box alanını tamamen atla.", ct);
 
     public Task<VisualObservation> ExtractVisualStructureAsync(byte[] imagePng, string visualType, CancellationToken ct = default) =>
         CallGeminiAsync(imagePng,
@@ -150,6 +156,18 @@ public class GeminiVisionProvider(HttpClient httpClient, IOptionsMonitor<GeminiO
             visual_text = new { type = "ARRAY", items = new { type = "STRING" } },
             symbols = new { type = "ARRAY", items = new { type = "STRING" } },
             measurements = new { type = "ARRAY", items = new { type = "STRING" } },
+            bounding_box = new
+            {
+                type = "OBJECT",
+                properties = new
+                {
+                    x = new { type = "NUMBER" },
+                    y = new { type = "NUMBER" },
+                    width = new { type = "NUMBER" },
+                    height = new { type = "NUMBER" }
+                },
+                required = new[] { "x", "y", "width", "height" }
+            },
             warnings = new
             {
                 type = "ARRAY",
@@ -218,6 +236,13 @@ public class GeminiVisionProvider(HttpClient httpClient, IOptionsMonitor<GeminiO
                 ? arr.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.String).Select(x => x.GetString()!).ToList()
                 : [];
 
+        VisualBoundingBox? boundingBox = null;
+        if (root.TryGetProperty("bounding_box", out var bboxEl) && bboxEl.ValueKind == JsonValueKind.Object)
+        {
+            boundingBox = new VisualBoundingBox(
+                GetDecimal(bboxEl, "x"), GetDecimal(bboxEl, "y"), GetDecimal(bboxEl, "width"), GetDecimal(bboxEl, "height"));
+        }
+
         return new VisualObservation(
             VisualType: GetString(root, "visual_type"),
             Description: GetString(root, "description"),
@@ -228,7 +253,8 @@ public class GeminiVisionProvider(HttpClient httpClient, IOptionsMonitor<GeminiO
             Symbols: GetStringArray("symbols"),
             Measurements: GetStringArray("measurements"),
             Warnings: warnings,
-            Usage: usage);
+            Usage: usage,
+            BoundingBox: boundingBox);
     }
 
     private sealed class GeminiGenerateContentResponse

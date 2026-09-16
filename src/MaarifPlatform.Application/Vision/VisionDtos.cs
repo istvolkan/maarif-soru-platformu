@@ -18,6 +18,13 @@ public sealed record VisualRelation(string Subject, string Relation, string Obje
 /// ilişkilerde varlığı soruyu MANUAL_REVIEW_REQUIRED'a düşürmelidir.</summary>
 public sealed record VisualWarning(string Type, string Message, decimal Confidence);
 
+/// <summary>Modelin işaretlediği, sayfa görüntüsü içinde asıl şekli/figürü kapsayan alt-dikdörtgen —
+/// sol-üst köşe orijinli, 0.0-1.0 aralığında NORMALİZE edilmiş oranlar (piksel değil), çünkü model
+/// gönderilen görüntünün gerçek piksel boyutunu bilmiyor. <see cref="VisualCropCalculator"/> bunu
+/// piksel dikdörtgenine çevirir. Model figürü ayırt edemezse (örn. görsel yalnızca gömülü metinse)
+/// bu alan hiç döndürülmeyebilir — o durumda tam sayfa görüntüsü kırpılmadan kullanılmaya devam eder.</summary>
+public sealed record VisualBoundingBox(decimal X, decimal Y, decimal Width, decimal Height);
+
 /// <summary>§29 KRİTİK KURAL: bu, Vision modelinin ürettiği bir GÖZLEMdir — "ground truth" değildir.
 /// Reasoning Engine (mevcut ILLMProvider) bunu soru metni ve Maarif bilgi tabanıyla birlikte,
 /// doğrulanması gereken bir girdi olarak ele almalıdır.</summary>
@@ -31,4 +38,5 @@ public sealed record VisualObservation(
     IReadOnlyList<string> Symbols,
     IReadOnlyList<string> Measurements,
     IReadOnlyList<VisualWarning> Warnings,
-    AiUsage Usage);
+    AiUsage Usage,
+    VisualBoundingBox? BoundingBox = null);
