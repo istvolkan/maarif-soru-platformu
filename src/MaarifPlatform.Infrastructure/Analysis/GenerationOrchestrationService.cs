@@ -1,8 +1,11 @@
 using System.Runtime.CompilerServices;
+using System.Security.Cryptography;
 using System.Text.Json;
 using MaarifPlatform.Application.Extraction;
 using MaarifPlatform.Application.Generation;
 using MaarifPlatform.Application.Providers;
+using MaarifPlatform.Application.Storage;
+using MaarifPlatform.Application.Visuals;
 using MaarifPlatform.Domain.Entities;
 using MaarifPlatform.Domain.Enums;
 using MaarifPlatform.Infrastructure.Ai;
@@ -32,7 +35,8 @@ public sealed record GenerateBatchRequest(
     IReadOnlyList<string> ContentFrameworkNames,
     string Context,
     string ReasoningRequirement,
-    int Count);
+    int Count,
+    string VisualUsage = "None");
 
 public enum GenerationItemOutcome { Success, Failed }
 
@@ -59,7 +63,8 @@ public class GenerationOrchestrationService(
     IOptionsMonitor<GenerationRoutingOptions> generationRoutingOptions,
     ReferenceSearchService searchService,
     CurriculumQueryService curriculumQuery,
-    QuestionSimilarityService similarityService)
+    QuestionSimilarityService similarityService,
+    IBookFileStorage storage)
 {
     public async Task<GenerationSummary> GenerateAsync(GenerateQuestionRequest request, CancellationToken ct = default)
     {
@@ -203,6 +208,7 @@ public class GenerationOrchestrationService(
             var item = blueprint[i];
             var attemptMessages = new List<string>();
             GenerateQuestionResult? accepted = null;
+            string? acceptedSvg = null;
 
             for (var attempt = 1; attempt <= maxAttempts && accepted is null; attempt++)
             {
@@ -221,7 +227,7 @@ public class GenerationOrchestrationService(
                     item.Difficulty.ToString(), item.QuestionType, request.Context, request.ReasoningRequirement,
                     grounding, request.SkillCodes,
                     item.ContentFramework is null ? [] : [item.ContentFramework],
-                    request.ProcessComponents, "None");
+                    request.ProcessComponents, request.VisualUsage);
 
                 GenerateQuestionResult generated;
                 try
@@ -317,7 +323,36 @@ public class GenerationOrchestrationService(
                     continue;
                 }
 
+                // §6 Görsel Soru Motoru (Faz 2) — LLM burada YALNIZCA bir tarif (visual_spec)
+                // üretmiştir; gerçek görsel VisualSpecRenderer tarafından deterministik olarak
+                // render edilir. Render başarısız olursa (geçersiz/tutarsız spec) bu da diğer
+                // kontroller gibi regenerate'e düşer — sahte/placeholder bir görselle ASLA devam
+                // edilmez.
+                string? renderedSvg = null;
+                if (generated.VisualRequired)
+                {
+                    if (generated.VisualSpec is null)
+                    {
+                        attemptMessages.Add("visual_required=true ama visual_spec eksik.");
+                        continue;
+                    }
+
+                    yield return new GenerationProgressEvent(slotNo, blueprint.Count,
+                        $"Soru {slotNo}/{blueprint.Count}: görsel oluşturuluyor…", null, null, null);
+
+                    try
+                    {
+                        renderedSvg = VisualSpecRenderer.RenderToSvg(generated.VisualSpec);
+                    }
+                    catch (Exception ex)
+                    {
+                        attemptMessages.Add($"Görsel üretilemedi: {ex.Message}");
+                        continue;
+                    }
+                }
+
                 accepted = generated;
+                acceptedSvg = renderedSvg;
             }
 
             if (accepted is null)
@@ -333,7 +368,7 @@ public class GenerationOrchestrationService(
                 continue;
             }
 
-            var (question, version) = await PersistGeneratedQuestionAsync(request, item, accepted, llmProvider.Name, ct);
+            var (question, version) = await PersistGeneratedQuestionAsync(request, item, accepted, acceptedSvg, llmProvider.Name, ct);
             await similarityService.RecordAsync(version.Id, request.Grade, request.Subject, accepted.Question, ct);
 
             succeeded++;
@@ -351,7 +386,7 @@ public class GenerationOrchestrationService(
 
     private async Task<(Question Question, QuestionVersion Version)> PersistGeneratedQuestionAsync(
         GenerateBatchRequest request, GenerationBlueprintItem item, GenerateQuestionResult result,
-        string providerName, CancellationToken ct)
+        string? renderedSvg, string providerName, CancellationToken ct)
     {
         var book = await FindOrCreatePlaceholderBookAsync(request.Grade, request.Subject, ct);
 
@@ -393,12 +428,27 @@ public class GenerationOrchestrationService(
             OriginalAnswer = result.CorrectAnswer,
             Solution = result.Solution,
             CorrectAnswer = result.CorrectAnswer,
-            DnaSchemaVersion = "1.0"
+            DnaSchemaVersion = "1.0",
+            RequiresVisual = renderedSvg is not null,
+            VisualType = renderedSvg is not null ? result.VisualSpec?.Type : null
         };
 
         db.Questions.Add(question);
         db.QuestionVersions.Add(version);
         db.QuestionDnas.Add(dna);
+
+        if (renderedSvg is not null)
+        {
+            var svgBytes = System.Text.Encoding.UTF8.GetBytes(renderedSvg);
+            var storageUri = await storage.SaveAsync(question.Id, "visual.svg", new MemoryStream(svgBytes), ct);
+            db.QuestionVisualAssets.Add(new QuestionVisualAsset
+            {
+                QuestionId = question.Id,
+                StorageUri = storageUri,
+                ContentType = "image/svg+xml",
+                AssetHash = Convert.ToHexString(SHA256.HashData(svgBytes))
+            });
+        }
 
         foreach (var d in result.Distractors)
         {
