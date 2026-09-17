@@ -88,6 +88,7 @@ public class QuestionVisualAssetConfiguration : IEntityTypeConfiguration<Questio
         b.Property(e => e.StorageUri).HasMaxLength(1000).IsRequired();
         b.Property(e => e.BoundingBoxJson).HasColumnType("jsonb");
         b.Property(e => e.AssetHash).HasMaxLength(128).IsRequired();
+        b.Property(e => e.ContentType).HasMaxLength(100);
         // §26 cache: aynı görsel aynı sağlayıcı/model/prompt sürümüyle tekrar işlenmesin.
         b.HasIndex(e => e.AssetHash);
 

@@ -120,7 +120,9 @@ app.MapGet("/media/question/{questionId:guid}/visual", async (Guid questionId, M
     }
 
     var stream = await storage.OpenReadAsync(asset.StorageUri, ct);
-    return Results.File(stream, "image/png");
+    // ContentType Faz 1 öncesi kayıtlarda null'dır (o dönemde tek tür vardı: PDF-crop PNG'si) —
+    // Faz 2'nin SVG'leri her zaman ContentType="image/svg+xml" ile kaydedilir.
+    return Results.File(stream, asset.ContentType ?? "image/png");
 }).RequireAuthorization();
 
 using (var scope = app.Services.CreateScope())
