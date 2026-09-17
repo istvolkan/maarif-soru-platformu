@@ -97,6 +97,24 @@ public class AnalysisOrchestrationService(
 
         var rubric = RubricEngine.Evaluate(result.CriterionEvaluations);
 
+        // §8 hallucination control — Faz 1 curriculum veri modeliyle paylaşılan ikinci katman:
+        // LLM'in döndürdüğü learning_outcome_code, RAG grounding'i "ikna edici" bulsa bile
+        // GERÇEK curriculum tablosunda (admin onaylı) yoksa uydurma kabul edilir — sessizce
+        // kaydedilmez, soru insan incelemesine düşer. Curriculum verisi hiç ingest edilmemiş bir
+        // Grade/Subject için (bu tablo henüz boşsa) bu kontrol devre dışı kalır — aksi halde Faz 1
+        // öncesi tüm mevcut Analyze akışı kırılırdı.
+        var curriculumCodeVerified = true;
+        if (!string.IsNullOrWhiteSpace(result.LearningOutcomeCode))
+        {
+            var curriculumDataExists = await db.LearningOutcomes
+                .AnyAsync(lo => lo.Grade == grade && lo.Subject == subject && lo.ApprovalStatus == ApprovalStatus.Approved, ct);
+            if (curriculumDataExists)
+            {
+                curriculumCodeVerified = await db.LearningOutcomes.AnyAsync(
+                    lo => lo.Code == result.LearningOutcomeCode && lo.ApprovalStatus == ApprovalStatus.Approved, ct);
+            }
+        }
+
         var nextVersionNo = await db.QuestionVersions
             .Where(v => v.QuestionId == questionId)
             .Select(v => (int?)v.VersionNo)
@@ -118,7 +136,8 @@ public class AnalysisOrchestrationService(
         var allVisualWarnings = (observation?.Warnings ?? []).Concat(visionResult.ValidationWarnings).ToList();
         var visualIssues = observation is not null && (observation.Confidence < 0.5m || allVisualWarnings.Count > 0);
 
-        var editorRequired = rubric.CriticalGateFailed || result.ManualReviewRequired || groundingInsufficient || visualIssues;
+        var editorRequired = rubric.CriticalGateFailed || result.ManualReviewRequired || groundingInsufficient
+            || visualIssues || !curriculumCodeVerified;
 
         var dna = new QuestionDna
         {
@@ -136,14 +155,18 @@ public class AnalysisOrchestrationService(
             OriginalVisualReference = originalDna.OriginalVisualReference,
             MathematicalCore = result.MathematicalCore,
             LearningOutcome = null,
-            LearningOutcomeCode = result.LearningOutcomeCode,
+            // Doğrulanamayan kod sessizce kaydedilmez (bkz. curriculumCodeVerified) — uydurma bir
+            // kod, boş bir alandan daha kötüdür.
+            LearningOutcomeCode = curriculumCodeVerified ? result.LearningOutcomeCode : null,
             FieldSkill = result.FieldSkill,
             ConceptualSkill = result.ConceptualSkill,
             ContextQuality = result.ContextIsDecorative ? "decorative" : "functional",
             MaarifAlignmentScore = rubric.WeightedScore,
             AlignmentIssuesJson = JsonSerializer.Serialize(rubric.Issues),
             TransformationLevel = rubric.Level,
-            QualityFlagsJson = JsonSerializer.Serialize(rubric.MissingCriteria.Select(m => $"missing_criterion:{m}")),
+            QualityFlagsJson = JsonSerializer.Serialize(
+                rubric.MissingCriteria.Select(m => $"missing_criterion:{m}")
+                    .Concat(curriculumCodeVerified ? [] : [$"unverified_learning_outcome_code:{result.LearningOutcomeCode}"])),
             EditorRequired = editorRequired,
             DnaSchemaVersion = "1.0",
 
