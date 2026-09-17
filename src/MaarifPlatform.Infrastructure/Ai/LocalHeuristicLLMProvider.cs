@@ -172,6 +172,33 @@ public class LocalHeuristicLLMProvider : ILLMProvider
         return Task.FromResult(result);
     }
 
+    public Task<CurriculumAlignmentResult> ValidateCurriculumAlignmentAsync(ValidateCurriculumAlignmentRequest request, CancellationToken ct = default)
+    {
+        // Gerçek pedagojik değerlendirme yapmaz — yalnızca yapısal bir sinyal (kazanım açıklaması
+        // sorunun metninde hiç geçmiyor mu?) kullanır; her zaman false/0 döndürmek pipeline'ı
+        // (fail-safe/regenerate) test edilemez hale getirirdi.
+        var descriptionWords = request.LearningOutcomeDescription
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(w => w.Length > 4)
+            .ToList();
+        var hasOverlap = descriptionWords.Count > 0
+            && descriptionWords.Any(w => request.QuestionText.Contains(w, StringComparison.OrdinalIgnoreCase));
+
+        var result = new CurriculumAlignmentResult(
+            MeasuresProcessComponent: hasOverlap,
+            LearningOutcomeAlignmentScore: hasOverlap ? 70 : 30,
+            SkillAlignmentScore: hasOverlap ? 65 : 30,
+            Issues: hasOverlap
+                ? []
+                : ["[MOCK] Gerçek curriculum hizası değerlendirmesi yapılmadı; yapısal sinyal (kazanım açıklamasıyla kelime örtüşmesi) bulunamadı."],
+            Usage: new AiUsage("local-heuristic", "mock-v1", EstimateTokens(request), 50, 0m, 5));
+
+        return Task.FromResult(result);
+    }
+
+    private static int EstimateTokens(ValidateCurriculumAlignmentRequest request) =>
+        (request.QuestionText.Length + request.LearningOutcomeDescription.Length) / 4;
+
     private static int EstimateTokens(ExtractCurriculumRequest request) =>
         request.DocumentChunks.Sum(c => c.ChunkText.Length) / 4;
 

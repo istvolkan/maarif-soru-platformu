@@ -21,4 +21,6 @@ public interface ILLMProvider
     Task<RecommendRevisionResult> RecommendRevisionAsync(RecommendRevisionRequest request, CancellationToken ct = default);
 
     Task<ExtractCurriculumResult> ExtractCurriculumStructureAsync(ExtractCurriculumRequest request, CancellationToken ct = default);
+
+    Task<CurriculumAlignmentResult> ValidateCurriculumAlignmentAsync(ValidateCurriculumAlignmentRequest request, CancellationToken ct = default);
 }

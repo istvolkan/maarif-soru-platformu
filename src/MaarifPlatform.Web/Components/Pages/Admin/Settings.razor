@@ -151,6 +151,21 @@
     </fieldset>
 
     <fieldset>
+        <legend>Soru Üretim Doğrulama (Curriculum Validator)</legend>
+        <div class="field">
+            <label>Curriculum Validator Sağlayıcı</label>
+            <InputSelect @bind-Value="_form.CurriculumValidatorProvider">
+                <option value="">(boş — Generator'ın kendisi denetler)</option>
+                <option value="Local">Local (mock, anahtar gerektirmez)</option>
+                <option value="Anthropic">Anthropic</option>
+            </InputSelect>
+        </div>
+        <div class="field"><label>Maks. Yeniden Üretim Denemesi</label><InputNumber @bind-Value="_form.GenerationMaxRegenerationAttempts" /></div>
+        <div class="field"><label>Benzerlik Reddetme Eşiği (0-1)</label><InputNumber @bind-Value="_form.GenerationSimilarityRejectThreshold" step="0.01" /></div>
+        <p class="note">Domain/matematik doğruluğu ve çapraz-model consensus için yukarıdaki Judge ayarları kullanılır — Soru Üret pipeline'ı ayrı bir Judge kurmaz.</p>
+    </fieldset>
+
+    <fieldset>
         <legend>Embeddings (RAG)</legend>
         <div class="field">
             <label>Sağlayıcı</label>
@@ -250,6 +265,10 @@
         _form.VisionConsensusConfidenceThreshold = Configuration.GetValue<decimal?>("Vision:ConsensusConfidenceThreshold") ?? 0.95m;
         _hasGeminiKey = !string.IsNullOrWhiteSpace(Configuration["Vision:Gemini:ApiKey"]);
         _hasVisionAnthropicKey = !string.IsNullOrWhiteSpace(Configuration["Vision:Anthropic:ApiKey"]);
+
+        _form.CurriculumValidatorProvider = Configuration["Generation:CurriculumValidatorProvider"] ?? "";
+        _form.GenerationMaxRegenerationAttempts = Configuration.GetValue<int?>("Generation:MaxRegenerationAttempts") ?? 2;
+        _form.GenerationSimilarityRejectThreshold = Configuration.GetValue<double?>("Generation:SimilarityRejectThreshold") ?? 0.92;
 
         _form.EmbeddingsProvider = Configuration["Embeddings:Provider"] ?? "Local";
         _form.EmbeddingsModel = Configuration["Embeddings:OpenAI:Model"] ?? "text-embedding-3-small";
@@ -399,6 +418,10 @@
             if (!string.IsNullOrWhiteSpace(_form.GeminiApiKey)) await SetAsync("Vision:Gemini:ApiKey", _form.GeminiApiKey);
             if (!string.IsNullOrWhiteSpace(_form.VisionAnthropicApiKey)) await SetAsync("Vision:Anthropic:ApiKey", _form.VisionAnthropicApiKey);
 
+            await SetAsync("Generation:CurriculumValidatorProvider", _form.CurriculumValidatorProvider);
+            await SetAsync("Generation:MaxRegenerationAttempts", _form.GenerationMaxRegenerationAttempts?.ToString());
+            await SetAsync("Generation:SimilarityRejectThreshold", _form.GenerationSimilarityRejectThreshold?.ToString(System.Globalization.CultureInfo.InvariantCulture));
+
             await SetAsync("Embeddings:Provider", _form.EmbeddingsProvider);
             await SetAsync("Embeddings:OpenAI:Model", _form.EmbeddingsModel);
             if (!string.IsNullOrWhiteSpace(_form.EmbeddingsApiKey)) await SetAsync("Embeddings:OpenAI:ApiKey", _form.EmbeddingsApiKey);
@@ -438,5 +461,9 @@
         public string EmbeddingsProvider { get; set; } = "Local";
         public string? EmbeddingsApiKey { get; set; }
         public string? EmbeddingsModel { get; set; }
+
+        public string CurriculumValidatorProvider { get; set; } = "";
+        public int? GenerationMaxRegenerationAttempts { get; set; }
+        public double? GenerationSimilarityRejectThreshold { get; set; }
     }
 }

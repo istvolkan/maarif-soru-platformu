@@ -126,3 +126,20 @@ public sealed record ExtractCurriculumResult(
     IReadOnlyList<CurriculumThemeCandidate> Themes,
     IReadOnlyList<CurriculumFieldSkillCandidate> FieldSkills,
     AiUsage Usage);
+
+// §7/§12 Curriculum Validator rolü — üretilen sorunun GERÇEK kazanım açıklaması + süreç
+// bileşenlerinden en az birini ölçüp ölçmediğini kontrol eder. Bu, Judge'ın genel kalite/
+// grounding kontrolünden FARKLI bir amaç taşır (bkz. TransformationOrchestrationService'teki
+// EvaluateQuestionAsync) — o yüzden ayrı bir rol/metot olarak modellenir.
+public sealed record ValidateCurriculumAlignmentRequest(
+    string QuestionText,
+    string LearningOutcomeCode,
+    string LearningOutcomeDescription,
+    IReadOnlyList<string> ProcessComponents);
+
+public sealed record CurriculumAlignmentResult(
+    bool MeasuresProcessComponent,
+    int LearningOutcomeAlignmentScore,
+    int SkillAlignmentScore,
+    IReadOnlyList<string> Issues,
+    AiUsage Usage);

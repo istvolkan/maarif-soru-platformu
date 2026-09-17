@@ -23,6 +23,7 @@ public class AnthropicLLMProvider : ILLMProvider
     private const string GenerateToolName = "submit_generation";
     private const string RecommendRevisionToolName = "submit_revision_recommendation";
     private const string ExtractCurriculumToolName = "submit_curriculum_structure";
+    private const string ValidateCurriculumAlignmentToolName = "submit_curriculum_alignment";
 
     private readonly IOptionsMonitor<AnthropicOptions> _optionsMonitor;
     private AnthropicClient? _client;
@@ -371,6 +372,97 @@ public class AnthropicLLMProvider : ILLMProvider
         }
 
         return new ExtractCurriculumResult(themes, fieldSkills, usage);
+    }
+
+    public async Task<CurriculumAlignmentResult> ValidateCurriculumAlignmentAsync(ValidateCurriculumAlignmentRequest request, CancellationToken ct = default)
+    {
+        var (options, client) = Current();
+        var parameters = new MessageCreateParams
+        {
+            Model = options.Model,
+            MaxTokens = options.MaxTokens,
+            System = BuildValidateCurriculumAlignmentSystemPrompt(request),
+            Tools = [BuildValidateCurriculumAlignmentTool()],
+            ToolChoice = new ToolChoiceTool { Name = ValidateCurriculumAlignmentToolName },
+            Messages = [new() { Role = Role.User, Content = request.QuestionText }],
+        };
+
+        var stopwatch = Stopwatch.StartNew();
+        var response = await client.Messages.Create(parameters, ct);
+        stopwatch.Stop();
+
+        var toolUse = response.Content
+            .Select(b => b.Value)
+            .OfType<ToolUseBlock>()
+            .FirstOrDefault(b => b.Name == ValidateCurriculumAlignmentToolName)
+            ?? throw new InvalidOperationException("Anthropic yanıtında beklenen submit_curriculum_alignment tool_use bloğu bulunamadı.");
+
+        var usage = BuildUsage(response, stopwatch, options);
+        var input = toolUse.Input;
+
+        static List<string> GetStringArray(IReadOnlyDictionary<string, JsonElement> input, string key) =>
+            input.TryGetValue(key, out var v) && v.ValueKind == JsonValueKind.Array
+                ? v.EnumerateArray().Select(e => e.GetString() ?? "").ToList()
+                : [];
+
+        return new CurriculumAlignmentResult(
+            MeasuresProcessComponent: input.TryGetValue("measures_process_component", out var mp)
+                && mp.ValueKind is JsonValueKind.True or JsonValueKind.False && mp.GetBoolean(),
+            LearningOutcomeAlignmentScore: input.TryGetValue("learning_outcome_alignment_score", out var los) ? los.GetInt32() : 0,
+            SkillAlignmentScore: input.TryGetValue("skill_alignment_score", out var sas) ? sas.GetInt32() : 0,
+            Issues: GetStringArray(input, "issues"),
+            Usage: usage);
+    }
+
+    private static Tool BuildValidateCurriculumAlignmentTool() => new()
+    {
+        Name = ValidateCurriculumAlignmentToolName,
+        Description = "Sorunun GERÇEK kazanım açıklamasıyla ve süreç bileşenleriyle ölçülebilir " +
+            "uyumunu bildir — genel kalite değil, YALNIZCA curriculum hizası.",
+        InputSchema = new()
+        {
+            Properties = new Dictionary<string, JsonElement>
+            {
+                ["measures_process_component"] = Schema("boolean",
+                    "Soru, verilen süreç bileşenlerinden EN AZ birini gerçekten ölçüyorsa true. " +
+                    "Yalnızca yüzeysel olarak konuyla ilgiliyse ama süreç bileşenini ölçmüyorsa false."),
+                ["learning_outcome_alignment_score"] = Schema("integer", "0-100, sorunun kazanım açıklamasıyla ne kadar örtüştüğü."),
+                ["skill_alignment_score"] = Schema("integer", "0-100, sorunun beklenen beceriyi ne kadar ölçtüğü."),
+                ["issues"] = JsonSerializer.SerializeToElement(new
+                {
+                    type = "array",
+                    description = "Uyumsuzluk varsa somut gerekçeler; sorun yoksa boş dizi.",
+                    items = new { type = "string" }
+                })
+            },
+            Required = ["measures_process_component", "learning_outcome_alignment_score", "skill_alignment_score", "issues"]
+        }
+    };
+
+    private static string BuildValidateCurriculumAlignmentSystemPrompt(ValidateCurriculumAlignmentRequest request)
+    {
+        var componentsList = request.ProcessComponents.Count == 0
+            ? "(bu kazanım için kayıtlı süreç bileşeni yok — yalnızca kazanım açıklamasına göre değerlendir)"
+            : string.Join("\n", request.ProcessComponents.Select(c => $"- {c}"));
+
+        return $"""
+            Sen bir Curriculum Validator'sın — SADECE sorunun resmi kazanıma ve süreç bileşenlerine
+            uyumunu denetlersin (matematiksel doğruluk veya dil kalitesi SENİN İŞİN DEĞİL, ayrı bir
+            hakem onları kontrol ediyor).
+
+            KAZANIM KODU: {request.LearningOutcomeCode}
+            KAZANIM AÇIKLAMASI: {request.LearningOutcomeDescription}
+
+            SÜREÇ BİLEŞENLERİ (sorunun en az birini ÖLÇMESİ gerekir, sadece BAHSETMESİ yetmez):
+            {componentsList}
+
+            KURALLAR:
+            1. "Maarif'e uygun görünüyor" gibi yüzeysel bir izlenim YETERSİZ — soru gerçekten bu
+               süreç bileşenini ölçen bir muhakeme/işlem gerektirmiyorsa measures_process_component=false.
+            2. Skorları yalnızca kazanım açıklamasına ve süreç bileşenlerine göre ver, genel soru
+               kalitesine göre DEĞİL.
+            3. Cevabını YALNIZCA submit_curriculum_alignment aracını çağırarak ver.
+            """;
     }
 
     private static Tool BuildRecommendRevisionTool() => new()

@@ -105,6 +105,9 @@ public class OpenAiLLMProvider : ILLMProvider
     public Task<ExtractCurriculumResult> ExtractCurriculumStructureAsync(ExtractCurriculumRequest request, CancellationToken ct = default)
         => throw new NotImplementedException("OpenAiLLMProvider şu an yalnızca Judge ikincil sağlayıcısı olarak kullanılıyor (bkz. Sprint 10); ExtractCurriculumStructure implemente edilmedi.");
 
+    public Task<CurriculumAlignmentResult> ValidateCurriculumAlignmentAsync(ValidateCurriculumAlignmentRequest request, CancellationToken ct = default)
+        => throw new NotImplementedException("OpenAiLLMProvider şu an yalnızca Judge ikincil sağlayıcısı olarak kullanılıyor (bkz. Sprint 10); ValidateCurriculumAlignment implemente edilmedi.");
+
     private static ChatTool BuildEvaluationTool()
     {
         var schema = JsonSerializer.Serialize(new

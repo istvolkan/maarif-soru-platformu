@@ -71,6 +71,7 @@ public static class DependencyInjection
         services.AddScoped<ReferenceIngestionService>();
         services.AddScoped<ReferenceSearchService>();
         services.AddScoped<CurriculumExtractionService>();
+        services.AddScoped<CurriculumQueryService>();
 
         // §4/§H/§8/§10 Analysis + Judge Provider Disagreement. Birincil/ikincil sağlayıcı seçimi
         // Sprint 11'den itibaren TAMAMEN çalışma-zamanlı (IOptionsMonitor + ILLMProviderFactory) —
@@ -83,6 +84,7 @@ public static class DependencyInjection
         services.AddScoped<OpenAiLLMProvider>();
         services.AddScoped<ILLMProviderFactory, LLMProviderFactory>();
         services.Configure<JudgeRoutingOptions>(configuration.GetSection("Judge"));
+        services.Configure<GenerationRoutingOptions>(configuration.GetSection("Generation"));
 
         services.AddScoped<AnalysisOrchestrationService>();
         services.AddScoped<TransformationOrchestrationService>();
