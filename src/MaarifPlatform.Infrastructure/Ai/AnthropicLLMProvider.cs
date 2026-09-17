@@ -4,6 +4,7 @@ using Anthropic;
 using Anthropic.Models.Messages;
 using MaarifPlatform.Application.Providers;
 using MaarifPlatform.Application.Rubric;
+using MaarifPlatform.Application.Visuals;
 using Microsoft.Extensions.Options;
 
 namespace MaarifPlatform.Infrastructure.Ai;
@@ -815,7 +816,12 @@ public class AnthropicLLMProvider : ILLMProvider
             }),
             ["correct_answer"] = Schema("string", "Doğru şıkkın metni (options içindeki değerlerden biri)."),
             ["solution"] = Schema("string", "Adım adım çözüm."),
-            ["distractors"] = BuildDistractorsSchema()
+            ["distractors"] = BuildDistractorsSchema(),
+            ["visual_required"] = Schema("boolean",
+                "Bu soru için gerçek bir görsel (grafik/koordinat sistemi/geometrik şekil/tablo) " +
+                "üretilmeli mi? Görsel yalnızca çözümün ANLAMLI bir parçasıysa true — dekoratif " +
+                "amaçla ASLA true verme."),
+            ["visual_spec"] = BuildVisualSpecSchema()
         };
 
         return new Tool
@@ -825,9 +831,122 @@ public class AnthropicLLMProvider : ILLMProvider
             InputSchema = new()
             {
                 Properties = properties,
-                Required = ["question", "options", "correct_answer", "solution", "distractors"]
+                Required = ["question", "options", "correct_answer", "solution", "distractors", "visual_required"]
             }
         };
+    }
+
+    /// <summary>§6 — LLM burada gerçek bir görsel ÜRETMEZ, yalnızca ne istediğinin yapılandırılmış
+    /// TARİFİNİ verir; gerçek SVG'yi VisualSpecRenderer (Application/Visuals) bu tarife bakarak
+    /// deterministik olarak üretir. visual_required=false ise bu alan tamamen yok sayılır.</summary>
+    private static JsonElement BuildVisualSpecSchema()
+    {
+        var pointSchema = new
+        {
+            type = "object",
+            properties = new
+            {
+                x = new { type = "number" },
+                y = new { type = "number" },
+                label = new { type = "string" }
+            },
+            required = new[] { "x", "y" }
+        };
+
+        var functionSchema = new
+        {
+            type = "object",
+            properties = new
+            {
+                expression = new { type = "string", description = "Örn. \"2*x-3\", \"x^2/4\", \"sqrt(x)\". Yalnızca x değişkeni ve + - * / ^ sin cos tan sqrt abs log ln exp pi e." },
+                label = new { type = "string", description = "Örn. \"f(x)=2x-3\"." }
+            },
+            required = new[] { "expression" }
+        };
+
+        var segmentSchema = new
+        {
+            type = "object",
+            properties = new
+            {
+                from = new { type = "string", description = "points içindeki bir noktanın label'ı." },
+                to = new { type = "string" },
+                x1 = new { type = "number" },
+                y1 = new { type = "number" },
+                x2 = new { type = "number" },
+                y2 = new { type = "number" },
+                label = new { type = "string" }
+            }
+        };
+
+        var vectorSchema = new
+        {
+            type = "object",
+            properties = new
+            {
+                x1 = new { type = "number" }, y1 = new { type = "number" },
+                x2 = new { type = "number" }, y2 = new { type = "number" },
+                label = new { type = "string" }
+            },
+            required = new[] { "x1", "y1", "x2", "y2" }
+        };
+
+        var sideLabelSchema = new
+        {
+            type = "object",
+            properties = new
+            {
+                from = new { type = "string", description = "vertices içindeki bir köşenin label'ı." },
+                to = new { type = "string" },
+                label = new { type = "string", description = "Örn. \"4 cm\"." }
+            },
+            required = new[] { "from", "to", "label" }
+        };
+
+        var angleLabelSchema = new
+        {
+            type = "object",
+            properties = new
+            {
+                vertex = new { type = "string" },
+                label = new { type = "string", description = "Örn. \"90°\"." }
+            },
+            required = new[] { "vertex", "label" }
+        };
+
+        return JsonSerializer.SerializeToElement(new
+        {
+            type = "object",
+            description = "visual_required=true ise DOLDUR. type alanı, istenen görsel türüyle EŞLEŞMELİ.",
+            properties = new Dictionary<string, object>
+            {
+                ["type"] = new { type = "string", @enum = new[] { "function_graph", "coordinate_system", "geometric_shape", "table" } },
+                ["x_min"] = new { type = "number" },
+                ["x_max"] = new { type = "number" },
+                ["y_min"] = new { type = "number" },
+                ["y_max"] = new { type = "number" },
+                ["x_label"] = new { type = "string" },
+                ["y_label"] = new { type = "string" },
+                ["functions"] = new { type = "array", description = "Yalnızca type=function_graph.", items = functionSchema },
+                ["points"] = new { type = "array", description = "function_graph/coordinate_system için işaretlenecek noktalar.", items = pointSchema },
+                ["vertices"] = new { type = "array", description = "Yalnızca type=geometric_shape (triangle/rectangle/polygon).", items = pointSchema },
+                ["segments"] = new { type = "array", description = "Yalnızca type=coordinate_system.", items = segmentSchema },
+                ["vectors"] = new { type = "array", description = "Yalnızca type=coordinate_system.", items = vectorSchema },
+                ["shape"] = new { type = "string", description = "Yalnızca type=geometric_shape: triangle/rectangle/polygon/circle.", @enum = new[] { "triangle", "rectangle", "polygon", "circle" } },
+                ["circle"] = new
+                {
+                    type = "object",
+                    description = "Yalnızca shape=circle.",
+                    properties = new { center_x = new { type = "number" }, center_y = new { type = "number" }, radius = new { type = "number" } },
+                    required = new[] { "center_x", "center_y", "radius" }
+                },
+                ["side_labels"] = new { type = "array", description = "Yalnızca type=geometric_shape.", items = sideLabelSchema },
+                ["angle_labels"] = new { type = "array", description = "Yalnızca type=geometric_shape.", items = angleLabelSchema },
+                ["headers"] = new { type = "array", description = "Yalnızca type=table.", items = new { type = "string" } },
+                ["rows"] = new { type = "array", description = "Yalnızca type=table — her satır headers ile aynı uzunlukta.", items = new { type = "array", items = new { type = "string" } } }
+            },
+            required = new[] { "type" }
+        });
     }
 
     private static string BuildGenerateSystemPrompt(GenerateQuestionRequest request)
@@ -842,9 +961,24 @@ public class AnthropicLLMProvider : ILLMProvider
             ? $"\n\n        SÜREÇ BİLEŞENLERİ (soru bunlardan en az birini gerçekten ÖLÇMELİ):\n        " +
               string.Join("\n        ", request.ProcessComponents.Select(c => $"- {c}"))
             : "";
-        var visualLine = request.VisualUsage != "None"
-            ? $"\n        - Görsel kullanımı: {request.VisualUsage}"
-            : "\n        - Görsel KULLANMA (Faz 1'de görsel motoru yok — yalnızca metin tabanlı bir soru üret).";
+        var visualInstruction = request.VisualUsage switch
+        {
+            GenerationVisualUsage.None =>
+                "\n        - Görsel KULLANMA: visual_required=false. visual_spec döndürme.",
+            GenerationVisualUsage.Auto =>
+                "\n        - Görsel kullanımı: OTOMATİK. Yalnızca görsel, çözümün ANLAMLI bir " +
+                "parçasıysa (dekoratif değilse) visual_required=true yap ve uygun bir visual_spec " +
+                "üret; aksi halde visual_required=false bırak.",
+            GenerationVisualUsage.FunctionGraph =>
+                "\n        - Görsel ZORUNLU: visual_required=true, visual_spec.type=\"function_graph\" olmalı.",
+            GenerationVisualUsage.CoordinateSystem =>
+                "\n        - Görsel ZORUNLU: visual_required=true, visual_spec.type=\"coordinate_system\" olmalı.",
+            GenerationVisualUsage.GeometricShape =>
+                "\n        - Görsel ZORUNLU: visual_required=true, visual_spec.type=\"geometric_shape\" olmalı.",
+            GenerationVisualUsage.Table =>
+                "\n        - Görsel ZORUNLU: visual_required=true, visual_spec.type=\"table\" olmalı.",
+            _ => "\n        - Görsel KULLANMA: visual_required=false."
+        };
 
         return $"""
         Sen Türkiye Yüzyılı Maarif Modeli'ne göre sıfırdan matematik sorusu üreten bir uzmansın.
@@ -855,7 +989,7 @@ public class AnthropicLLMProvider : ILLMProvider
         - Kazanım kodu: {request.LearningOutcomeCode}
         - Zorluk: {request.Difficulty}
         - Soru tipi: {request.QuestionType}
-        - Muhakeme tipi: {request.ReasoningType}{skillsLine}{frameworksLine}{visualLine}{componentsLine}
+        - Muhakeme tipi: {request.ReasoningType}{skillsLine}{frameworksLine}{visualInstruction}{componentsLine}
 
         KURALLAR:
         1. Yalnızca aşağıdaki [KAYNAK n] bloklarına dayanarak kazanım/olgu iddiası üret.
@@ -863,7 +997,13 @@ public class AnthropicLLMProvider : ILLMProvider
         2. Sorunun matematiksel olarak doğru ve tek bir doğru cevabı olmasına dikkat et.
         3. Her yanlış şık için bir çeldirici kaydı ver; mümkünse bir öğrenci hata tipini
            (misconception_code) belirt, emin değilsen boş bırak — uydurma.
-        4. Cevabını YALNIZCA submit_generation aracını çağırarak ver.
+        4. visual_spec bir görsel DOSYASI değil, yapılandırılmış bir TARİFTİR — gerçek görsel
+           ayrı bir motor tarafından bu tarife göre üretilecek. function_graph için expression
+           alanına yalnızca x değişkeni ve + - * / ^ sin cos tan sqrt abs log ln exp pi e kullan
+           (başka hiçbir sözdizimi render edilemez). "[GRAFİK BURADA]" gibi bir metin/placeholder
+           ASLA üretme — ya visual_required=true ile gerçek bir visual_spec ver ya da
+           visual_required=false bırak.
+        5. Cevabını YALNIZCA submit_generation aracını çağırarak ver.
 
         {BuildGroundingBlock(request.Grounding)}
         """;
@@ -894,13 +1034,104 @@ public class AnthropicLLMProvider : ILLMProvider
             }
         }
 
+        var visualRequired = input.TryGetValue("visual_required", out var vr)
+            && vr.ValueKind is JsonValueKind.True or JsonValueKind.False && vr.GetBoolean();
+        var visualSpec = visualRequired && input.TryGetValue("visual_spec", out var vs) && vs.ValueKind == JsonValueKind.Object
+            ? ParseVisualSpec(vs)
+            : null;
+
         return new GenerateQuestionResult(
             Question: input.TryGetValue("question", out var q) ? q.GetString() ?? "" : "",
             Options: options,
             CorrectAnswer: input.TryGetValue("correct_answer", out var ca) ? ca.GetString() ?? "" : "",
             Solution: input.TryGetValue("solution", out var sol) ? sol.GetString() ?? "" : "",
             Distractors: distractors,
-            Usage: usage);
+            Usage: usage,
+            VisualRequired: visualRequired,
+            VisualSpec: visualSpec);
+    }
+
+    private static VisualSpec ParseVisualSpec(JsonElement el)
+    {
+        static double? GetDouble(JsonElement e, string key) =>
+            e.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.Number ? v.GetDouble() : null;
+        static string? GetString(JsonElement e, string key) =>
+            e.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+        static List<string>? GetStringList(JsonElement e, string key) =>
+            e.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.Array
+                ? v.EnumerateArray().Select(x => x.GetString() ?? "").ToList()
+                : null;
+
+        var type = GetString(el, "type") ?? throw new FormatException("visual_spec.type eksik.");
+
+        PlotPoint ParsePoint(JsonElement p) => new(
+            GetDouble(p, "x") ?? throw new FormatException("Nokta x eksik."),
+            GetDouble(p, "y") ?? throw new FormatException("Nokta y eksik."),
+            GetString(p, "label"));
+
+        List<PlotPoint>? points = el.TryGetProperty("points", out var pointsEl) && pointsEl.ValueKind == JsonValueKind.Array
+            ? pointsEl.EnumerateArray().Select(ParsePoint).ToList() : null;
+        List<PlotPoint>? vertices = el.TryGetProperty("vertices", out var verticesEl) && verticesEl.ValueKind == JsonValueKind.Array
+            ? verticesEl.EnumerateArray().Select(ParsePoint).ToList() : null;
+
+        List<PlotFunction>? functions = el.TryGetProperty("functions", out var fnEl) && fnEl.ValueKind == JsonValueKind.Array
+            ? fnEl.EnumerateArray()
+                .Select(f => new PlotFunction(GetString(f, "expression") ?? throw new FormatException("function.expression eksik."), GetString(f, "label")))
+                .ToList()
+            : null;
+
+        List<PlotSegment>? segments = el.TryGetProperty("segments", out var segEl) && segEl.ValueKind == JsonValueKind.Array
+            ? segEl.EnumerateArray()
+                .Select(s => new PlotSegment(GetString(s, "from"), GetString(s, "to"), GetDouble(s, "x1"), GetDouble(s, "y1"), GetDouble(s, "x2"), GetDouble(s, "y2"), GetString(s, "label")))
+                .ToList()
+            : null;
+
+        List<PlotVector>? vectors = el.TryGetProperty("vectors", out var vecEl) && vecEl.ValueKind == JsonValueKind.Array
+            ? vecEl.EnumerateArray()
+                .Select(v => new PlotVector(
+                    GetDouble(v, "x1") ?? throw new FormatException("vector.x1 eksik."), GetDouble(v, "y1") ?? throw new FormatException("vector.y1 eksik."),
+                    GetDouble(v, "x2") ?? throw new FormatException("vector.x2 eksik."), GetDouble(v, "y2") ?? throw new FormatException("vector.y2 eksik."),
+                    GetString(v, "label")))
+                .ToList()
+            : null;
+
+        PlotCircle? circle = el.TryGetProperty("circle", out var circleEl) && circleEl.ValueKind == JsonValueKind.Object
+            ? new PlotCircle(
+                GetDouble(circleEl, "center_x") ?? throw new FormatException("circle.center_x eksik."),
+                GetDouble(circleEl, "center_y") ?? throw new FormatException("circle.center_y eksik."),
+                GetDouble(circleEl, "radius") ?? throw new FormatException("circle.radius eksik."))
+            : null;
+
+        List<PlotSideLabel>? sideLabels = el.TryGetProperty("side_labels", out var slEl) && slEl.ValueKind == JsonValueKind.Array
+            ? slEl.EnumerateArray()
+                .Select(s => new PlotSideLabel(
+                    GetString(s, "from") ?? throw new FormatException("side_label.from eksik."),
+                    GetString(s, "to") ?? throw new FormatException("side_label.to eksik."),
+                    GetString(s, "label") ?? throw new FormatException("side_label.label eksik.")))
+                .ToList()
+            : null;
+
+        List<PlotAngleLabel>? angleLabels = el.TryGetProperty("angle_labels", out var alEl) && alEl.ValueKind == JsonValueKind.Array
+            ? alEl.EnumerateArray()
+                .Select(a => new PlotAngleLabel(
+                    GetString(a, "vertex") ?? throw new FormatException("angle_label.vertex eksik."),
+                    GetString(a, "label") ?? throw new FormatException("angle_label.label eksik.")))
+                .ToList()
+            : null;
+
+        List<IReadOnlyList<string>>? rows = el.TryGetProperty("rows", out var rowsEl) && rowsEl.ValueKind == JsonValueKind.Array
+            ? rowsEl.EnumerateArray()
+                .Select(r => (IReadOnlyList<string>)r.EnumerateArray().Select(c => c.GetString() ?? "").ToList())
+                .ToList()
+            : null;
+
+        return new VisualSpec(
+            type,
+            GetDouble(el, "x_min"), GetDouble(el, "x_max"), GetDouble(el, "y_min"), GetDouble(el, "y_max"),
+            GetString(el, "x_label"), GetString(el, "y_label"),
+            functions, points, vertices, segments, vectors,
+            GetString(el, "shape"), circle, sideLabels, angleLabels,
+            GetStringList(el, "headers"), rows);
     }
 
     private static string BuildGroundingBlock(IReadOnlyList<GroundingReference> grounding) =>

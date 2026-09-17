@@ -1,4 +1,5 @@
 using MaarifPlatform.Application.Vision;
+using MaarifPlatform.Application.Visuals;
 
 namespace MaarifPlatform.Application.Providers;
 
@@ -68,6 +69,19 @@ public sealed record EvaluateQuestionResult(
     IReadOnlyList<string> QualityFlags,
     AiUsage Usage);
 
+/// <summary>§6/§2J Görsel Kullanımı — Faz 2a kapsamındaki gerçek değerler. "None" (Görsel
+/// Kullanma) ve "Auto" (Otomatik — LLM pedagojik gereklilik kararı verir) dışındaki her değer
+/// belirli bir <see cref="VisualSpecTypes"/> türünü ZORUNLU kılar.</summary>
+public static class GenerationVisualUsage
+{
+    public const string None = "None";
+    public const string Auto = "Auto";
+    public const string FunctionGraph = "FunctionGraph";
+    public const string CoordinateSystem = "CoordinateSystem";
+    public const string GeometricShape = "GeometricShape";
+    public const string Table = "Table";
+}
+
 // §16 Yeni Soru Üretim Modülü. Faz 1 cascading form alanları (SkillCodes/ContentFrameworks/
 // ProcessComponents/VisualUsage) sona OPSİYONEL eklendi — eski POST /api/questions/generate
 // (serbest metin, tek soru) çağrı şekli hiç değişmeden derlenir.
@@ -86,13 +100,18 @@ public sealed record GenerateQuestionRequest(
     IReadOnlyList<string>? ProcessComponents = null,
     string VisualUsage = "None");
 
+// §6 Görsel Soru Motoru (Faz 2) — VisualRequired/VisualSpec yalnızca VisualUsage != "None"
+// istendiğinde dolu gelir. VisualSpec LLM'in ürettiği bir TARİFTİR, gerçek görsel değildir —
+// gerçek SVG'yi VisualSpecRenderer (Application/Visuals) deterministik olarak üretir.
 public sealed record GenerateQuestionResult(
     string Question,
     IReadOnlyList<string> Options,
     string CorrectAnswer,
     string Solution,
     IReadOnlyList<DistractorDto> Distractors,
-    AiUsage Usage);
+    AiUsage Usage,
+    bool VisualRequired = false,
+    VisualSpec? VisualSpec = null);
 
 // ManualReviewRequired'a düşmüş, henüz Transform'a girmemiş sorular için editöre yönelik
 // aksiyona dönük düzeltme önerisi — rubric.Issues'un (RubricEngine) teşhis odaklı açıklamalarından

@@ -1,4 +1,5 @@
 using MaarifPlatform.Application.Providers;
+using MaarifPlatform.Application.Visuals;
 
 namespace MaarifPlatform.Infrastructure.Ai;
 
@@ -115,16 +116,41 @@ public class LocalHeuristicLLMProvider : ILLMProvider
             new("D", null, "[MOCK] Gerçek çeldirici analizi yapılmadı.")
         };
 
+        var (visualRequired, visualSpec) = BuildMockVisualSpec(request.VisualUsage);
+
         var result = new GenerateQuestionResult(
             Question: $"[MOCK-GENERATE] {request.Theme} — {request.Context}",
             Options: options,
             CorrectAnswer: options[0],
             Solution: "[MOCK] Gerçek çözüm üretilmedi.",
             Distractors: distractors,
-            Usage: new AiUsage("local-heuristic", "mock-v1", EstimateTokens(request), 120, 0m, 5));
+            Usage: new AiUsage("local-heuristic", "mock-v1", EstimateTokens(request), 120, 0m, 5),
+            VisualRequired: visualRequired,
+            VisualSpec: visualSpec);
 
         return Task.FromResult(result);
     }
+
+    /// <summary>Gerçek pedagojik tasarım YAPMAZ (hangi görselin bu soruya anlamlı katkısı olacağına
+    /// karar vermez) ama VisualUsage != None olduğunda GERÇEK, render EDİLEBİLİR bir spec döner —
+    /// böylece render→kaydet→göster borusunun tamamı Ai:Provider=Local ile ücretsiz test edilebilir
+    /// (mevcut mock felsefesiyle aynı: sahte değil, "ilhamsız ama gerçek").</summary>
+    private static (bool Required, VisualSpec? Spec) BuildMockVisualSpec(string visualUsage) => visualUsage switch
+    {
+        GenerationVisualUsage.FunctionGraph => (true, new VisualSpec(
+            VisualSpecTypes.FunctionGraph, XMin: -10, XMax: 10,
+            Functions: [new PlotFunction("x", "[MOCK] f(x)=x")])),
+        GenerationVisualUsage.CoordinateSystem => (true, new VisualSpec(
+            VisualSpecTypes.CoordinateSystem,
+            Points: [new PlotPoint(1, 1, "[MOCK] A"), new PlotPoint(3, 3, "[MOCK] B")],
+            Segments: [new PlotSegment("[MOCK] A", "[MOCK] B")])),
+        GenerationVisualUsage.GeometricShape => (true, new VisualSpec(
+            VisualSpecTypes.GeometricShape, Shape: "triangle",
+            Vertices: [new PlotPoint(0, 0, "A"), new PlotPoint(4, 0, "B"), new PlotPoint(0, 3, "C")])),
+        GenerationVisualUsage.Table => (true, new VisualSpec(
+            VisualSpecTypes.Table, Headers: ["x", "[MOCK] f(x)"], Rows: [["0", "0"], ["1", "1"]])),
+        _ => (false, null)
+    };
 
     public Task<RecommendRevisionResult> RecommendRevisionAsync(RecommendRevisionRequest request, CancellationToken ct = default)
     {
