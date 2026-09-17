@@ -830,7 +830,23 @@ public class AnthropicLLMProvider : ILLMProvider
         };
     }
 
-    private static string BuildGenerateSystemPrompt(GenerateQuestionRequest request) => $"""
+    private static string BuildGenerateSystemPrompt(GenerateQuestionRequest request)
+    {
+        var skillsLine = request.SkillCodes is { Count: > 0 }
+            ? $"\n        - Alan becerisi: {string.Join(", ", request.SkillCodes)}"
+            : "";
+        var frameworksLine = request.ContentFrameworks is { Count: > 0 }
+            ? $"\n        - İçerik çerçevesi: {string.Join(", ", request.ContentFrameworks)}"
+            : "";
+        var componentsLine = request.ProcessComponents is { Count: > 0 }
+            ? $"\n\n        SÜREÇ BİLEŞENLERİ (soru bunlardan en az birini gerçekten ÖLÇMELİ):\n        " +
+              string.Join("\n        ", request.ProcessComponents.Select(c => $"- {c}"))
+            : "";
+        var visualLine = request.VisualUsage != "None"
+            ? $"\n        - Görsel kullanımı: {request.VisualUsage}"
+            : "\n        - Görsel KULLANMA (Faz 1'de görsel motoru yok — yalnızca metin tabanlı bir soru üret).";
+
+        return $"""
         Sen Türkiye Yüzyılı Maarif Modeli'ne göre sıfırdan matematik sorusu üreten bir uzmansın.
 
         HEDEF:
@@ -839,7 +855,7 @@ public class AnthropicLLMProvider : ILLMProvider
         - Kazanım kodu: {request.LearningOutcomeCode}
         - Zorluk: {request.Difficulty}
         - Soru tipi: {request.QuestionType}
-        - Muhakeme tipi: {request.ReasoningType}
+        - Muhakeme tipi: {request.ReasoningType}{skillsLine}{frameworksLine}{visualLine}{componentsLine}
 
         KURALLAR:
         1. Yalnızca aşağıdaki [KAYNAK n] bloklarına dayanarak kazanım/olgu iddiası üret.
@@ -851,6 +867,7 @@ public class AnthropicLLMProvider : ILLMProvider
 
         {BuildGroundingBlock(request.Grounding)}
         """;
+    }
 
     private static string BuildGenerateUserContent(GenerateQuestionRequest request) => $"""
         BAĞLAM/SENARYO İSTEĞİ:

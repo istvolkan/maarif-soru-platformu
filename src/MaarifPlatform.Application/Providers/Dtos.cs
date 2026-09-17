@@ -68,7 +68,9 @@ public sealed record EvaluateQuestionResult(
     IReadOnlyList<string> QualityFlags,
     AiUsage Usage);
 
-// §16 Yeni Soru Üretim Modülü.
+// §16 Yeni Soru Üretim Modülü. Faz 1 cascading form alanları (SkillCodes/ContentFrameworks/
+// ProcessComponents/VisualUsage) sona OPSİYONEL eklendi — eski POST /api/questions/generate
+// (serbest metin, tek soru) çağrı şekli hiç değişmeden derlenir.
 public sealed record GenerateQuestionRequest(
     int Grade,
     string Subject,
@@ -78,7 +80,11 @@ public sealed record GenerateQuestionRequest(
     string QuestionType,
     string Context,
     string ReasoningType,
-    IReadOnlyList<GroundingReference> Grounding);
+    IReadOnlyList<GroundingReference> Grounding,
+    IReadOnlyList<string>? SkillCodes = null,
+    IReadOnlyList<string>? ContentFrameworks = null,
+    IReadOnlyList<string>? ProcessComponents = null,
+    string VisualUsage = "None");
 
 public sealed record GenerateQuestionResult(
     string Question,
