@@ -43,6 +43,11 @@ else
         <div class="card pool-card">
             <div class="pool-question">@q.QuestionText</div>
 
+            @if (q.HasVisual)
+            {
+                <img class="pool-visual" src="@($"/media/question/{q.Id}/visual")" alt="Soru görseli" />
+            }
+
             @if (q.Options.Count > 0)
             {
                 <ul class="pool-options">
@@ -93,6 +98,7 @@ else
     .pool-toolbar { margin-bottom: 1.25rem; }
     .pool-card { margin-bottom: 1.25rem; }
     .pool-question { font-size: 1.05rem; font-weight: 600; margin-bottom: 0.75rem; }
+    .pool-visual { max-width: 100%; border: 1px solid var(--z-border, #ddd); border-radius: var(--z-radius); margin-bottom: 0.75rem; }
     .pool-options { list-style: none; margin: 0 0 0.75rem 0; padding: 0; }
     .pool-options li { padding: 0.25rem 0; }
     .pool-options li.correct { font-weight: 700; color: var(--z-success); }
@@ -156,7 +162,7 @@ else
                 options.Select(o => (o.Label, o.Text)).ToList(), correctLabel,
                 row.Dna.Solution, row.Dna.Grade ?? 0, row.Dna.Subject ?? "-",
                 row.Dna.LearningOutcomeCode, row.Dna.FieldSkill, row.Dna.Difficulty?.ToString(),
-                distractors));
+                distractors, row.Dna.RequiresVisual));
         }
     }
 
@@ -237,5 +243,5 @@ else
     private sealed record PoolQuestionRow(
         Guid Id, string QuestionText, List<(string Label, string Text)> Options, string? CorrectLabel,
         string? Solution, int Grade, string Subject, string? LearningOutcomeCode, string? Skill,
-        string? Difficulty, List<DistractorRow> Distractors);
+        string? Difficulty, List<DistractorRow> Distractors, bool HasVisual);
 }
