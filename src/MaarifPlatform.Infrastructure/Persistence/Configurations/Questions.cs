@@ -102,3 +102,22 @@ public class QuestionVisualAssetConfiguration : IEntityTypeConfiguration<Questio
             .OnDelete(DeleteBehavior.SetNull);
     }
 }
+
+public class QuestionEmbeddingConfiguration : IEntityTypeConfiguration<QuestionEmbedding>
+{
+    public void Configure(EntityTypeBuilder<QuestionEmbedding> b)
+    {
+        b.ToTable("question_embeddings");
+        b.HasKey(e => e.Id);
+        b.Property(e => e.Subject).HasMaxLength(100).IsRequired();
+        // ReferenceChunkConfiguration'daki 1536 boyut varsayımıyla AYNI — aynı IEmbeddingProvider paylaşılır.
+        b.Property(e => e.Embedding).HasColumnType("vector(1536)").IsRequired();
+        b.HasIndex(e => new { e.Grade, e.Subject });
+        b.HasIndex(e => e.QuestionVersionId).IsUnique();
+
+        b.HasOne(e => e.QuestionVersion)
+            .WithMany()
+            .HasForeignKey(e => e.QuestionVersionId)
+            .OnDelete(DeleteBehavior.Cascade);
+    }
+}

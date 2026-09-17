@@ -3,6 +3,7 @@ using System;
 using MaarifPlatform.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using Pgvector;
@@ -12,9 +13,11 @@ using Pgvector;
 namespace MaarifPlatform.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(MaarifDbContext))]
-    partial class MaarifDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260917063113_AddQuestionEmbeddings")]
+    partial class AddQuestionEmbeddings
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder

@@ -13,5 +13,6 @@ public class InMemoryMaarifDbContext(DbContextOptions<MaarifDbContext> options) 
     {
         base.OnModelCreating(modelBuilder);
         modelBuilder.Entity<ReferenceChunk>().Ignore(c => c.Embedding);
+        modelBuilder.Entity<QuestionEmbedding>().Ignore(c => c.Embedding);
     }
 }
