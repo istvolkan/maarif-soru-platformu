@@ -40,7 +40,8 @@ public enum GenerationItemOutcome { Success, Failed }
 /// aşamasını temsil eder (fake animasyon yok). <see cref="Outcome"/> yalnızca bir slot
 /// kesinleşince (başarı/başarısızlık) dolu gelir, ara aşama olaylarında null'dır.</summary>
 public sealed record GenerationProgressEvent(
-    int SlotNo, int Total, string Stage, GenerationItemOutcome? Outcome, Guid? QuestionId, string? Message);
+    int SlotNo, int Total, string Stage, GenerationItemOutcome? Outcome, Guid? QuestionId, string? Message,
+    bool IsFinal = false);
 
 /// <summary>§16 Yeni Soru Üretim Modülü. PDF kaynağı yoktur — LLM'in ürettiği içerik doğrudan
 /// bir `Original` QuestionVersion/QuestionDna olarak kalıcılaştırılır (BookExtractionService'in
@@ -157,7 +158,7 @@ public class GenerationOrchestrationService(
         if (!hasCurriculum)
         {
             yield return new GenerationProgressEvent(0, request.Count, "Durduruldu", GenerationItemOutcome.Failed, null,
-                "Bu kombinasyon için doğrulanmış öğretim programı verisi bulunamadı.");
+                "Bu kombinasyon için doğrulanmış öğretim programı verisi bulunamadı.", IsFinal: true);
             yield break;
         }
 
@@ -177,7 +178,7 @@ public class GenerationOrchestrationService(
 
         if (blueprint is null)
         {
-            yield return new GenerationProgressEvent(0, request.Count, "Durduruldu", GenerationItemOutcome.Failed, null, blueprintError);
+            yield return new GenerationProgressEvent(0, request.Count, "Durduruldu", GenerationItemOutcome.Failed, null, blueprintError, IsFinal: true);
             yield break;
         }
 
@@ -345,7 +346,7 @@ public class GenerationOrchestrationService(
                 ? $"Soru havuzu hazırlandı: {succeeded}/{blueprint.Count} soru tamamlandı."
                 : $"{blueprint.Count} sorudan {succeeded}'i kalite kontrollerini geçti. {failed} soru başarısız oldu " +
                   "(düşük kaliteyle doldurulmadı) — isterseniz tekrar deneyin.",
-            null, null, null);
+            null, null, null, IsFinal: true);
     }
 
     private async Task<(Question Question, QuestionVersion Version)> PersistGeneratedQuestionAsync(
@@ -354,7 +355,11 @@ public class GenerationOrchestrationService(
     {
         var book = await FindOrCreatePlaceholderBookAsync(request.Grade, request.Subject, ct);
 
-        var question = new Question { BookId = book.Id, Status = QuestionStatus.Extracted };
+        // GenerateAsync'in (eski, doğrulamasız tek-soru API'si) aksine bu yol yalnızca Curriculum
+        // Validator + Judge'ı GEÇMİŞ sorular için çağrılır — durum bu yüzden "Extracted" değil,
+        // doğrudan AiApproved (Transform pipeline'ının Judge geçince yaptığıyla aynı anlam:
+        // otomatik doğrulamadan geçti, yalnızca insan "Onayla"sı bekliyor).
+        var question = new Question { BookId = book.Id, Status = QuestionStatus.AiApproved };
 
         var version = new QuestionVersion
         {

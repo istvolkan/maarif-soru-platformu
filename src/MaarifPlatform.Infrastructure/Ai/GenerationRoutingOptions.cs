@@ -20,4 +20,8 @@ public class GenerationRoutingOptions
     /// <summary>pgvector cosine similarity bu eşiği (0-1) aşan bir soru, mevcut havuzdaki bir
     /// sorunun yalnızca sayı/isim değiştirilmiş kopyası sayılır ve reddedilir (§10).</summary>
     public double SimilarityRejectThreshold { get; set; } = 0.92;
+
+    /// <summary>§3 "Soru Adedi" alanının üst sınırı — Soru Üret formu bunun üzerine çıkan bir
+    /// istek göndermez.</summary>
+    public int MaxQuestionCount { get; set; } = 50;
 }

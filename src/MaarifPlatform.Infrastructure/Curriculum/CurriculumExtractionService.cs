@@ -24,6 +24,13 @@ public class CurriculumExtractionService(
     ILLMProviderFactory providerFactory,
     IOptionsMonitor<AiRoutingOptions> aiRouting)
 {
+    /// <summary>Gerçek MEB dokümanları yüzlerce sayfa/chunk olabilir (ör. bu depoda zaten ingest
+    /// edilmiş 772 chunk'lık bir 9. sınıf matematik kitabı) — hepsini TEK bir LLM çağrısına
+    /// vermek context penceresini aşar ve tek bir dev, ucuz olmayan istek yaratır. Chunk'lar
+    /// sayfa sırasıyla bu boyutta gruplara bölünüp HER grup ayrı bir extraction çağrısı olarak
+    /// işlenir; sonuçlar (aynı isim/kod tekrar ederse tek kayda) birleştirilir.</summary>
+    private const int ChunkBatchSize = 20;
+
     public async Task<CurriculumExtractionResult> ExtractAsync(Guid referenceDocumentId, CancellationToken ct = default)
     {
         var document = await db.ReferenceDocuments.FirstOrDefaultAsync(d => d.Id == referenceDocumentId, ct)
@@ -47,125 +54,171 @@ public class CurriculumExtractionService(
         }
 
         var llmProvider = providerFactory.Get(aiRouting.CurrentValue.Provider);
-        var grounding = chunks
-            .Select(c => new GroundingReference(c.ReferenceDocumentId, c.Page, c.SectionPath, c.ChunkText))
-            .ToList();
-
-        var result = await llmProvider.ExtractCurriculumStructureAsync(
-            new ExtractCurriculumRequest(document.Grade.Value, document.Subject, grounding), ct);
-
         var standardVersion = await FindOrCreateDefaultStandardVersionAsync(ct);
+
+        // Aynı çalıştırma içinde farklı batch'lerden gelen aynı isimli tema/aynı kodlu kazanımı
+        // TEK kayda birleştirir — her chunk grubu kendi bakış açısıyla aynı temayı görebilir.
+        var themesByName = new Dictionary<string, Domain.Entities.Theme>(StringComparer.OrdinalIgnoreCase);
+        var outcomesByCode = new Dictionary<string, LearningOutcome>(StringComparer.OrdinalIgnoreCase);
+
+        // Bu SADECE bu run'ın içindeki tekrarları yakalar — aynı kazanım kodu DAHA ÖNCEKİ bir
+        // extraction'dan (başka bir doküman, ör. aynı müfredatın 2. kitabı) veritabanında zaten
+        // varsa yukarıdaki in-memory kontrol bunu göremez ve unique index ihlaliyle SaveChangesAsync
+        // patlardı (gerçek bir MEB dokümanıyla test ederken tam olarak bu yaşandı) — o yüzden
+        // mevcut kodlar/isimler baştan önceden yüklenir, "seen" kümesine dahil edilir ama ASLA
+        // yeniden Add edilmez (yalnızca atlanır, zaten Approved/Draft olarak duruyorlar).
+        var existingOutcomeCodes = await db.LearningOutcomes
+            .Where(lo => lo.MaarifStandardVersionId == standardVersion.Id)
+            .Select(lo => lo.Code)
+            .ToListAsync(ct);
+        foreach (var code in existingOutcomeCodes)
+        {
+            outcomesByCode.TryAdd(code, null!);
+        }
+
+        var existingThemes = await db.Themes
+            .Where(t => t.Grade == document.Grade.Value && t.Subject == document.Subject)
+            .ToListAsync(ct);
+        foreach (var existingTheme in existingThemes)
+        {
+            themesByName.TryAdd(existingTheme.Name, existingTheme);
+        }
 
         int themesCreated = 0, outcomesCreated = 0, frameworksCreated = 0, componentsCreated = 0, skillsCreated = 0;
 
-        foreach (var themeCandidate in result.Themes)
+        foreach (var batch in chunks.Chunk(ChunkBatchSize))
         {
-            if (string.IsNullOrWhiteSpace(themeCandidate.Name))
-            {
-                continue;
-            }
+            ct.ThrowIfCancellationRequested();
 
-            var theme = new Domain.Entities.Theme
-            {
-                Grade = document.Grade.Value,
-                Subject = document.Subject,
-                Name = themeCandidate.Name,
-                MaarifStandardVersionId = standardVersion.Id,
-                SourceDocumentId = referenceDocumentId,
-                SourcePage = themeCandidate.SourcePage,
-                ApprovalStatus = ApprovalStatus.Draft
-            };
-            db.Themes.Add(theme);
-            themesCreated++;
+            var grounding = batch
+                .Select(c => new GroundingReference(c.ReferenceDocumentId, c.Page, c.SectionPath, c.ChunkText))
+                .ToList();
 
-            foreach (var outcomeCandidate in themeCandidate.LearningOutcomes)
+            var result = await llmProvider.ExtractCurriculumStructureAsync(
+                new ExtractCurriculumRequest(document.Grade.Value, document.Subject, grounding), ct);
+
+            foreach (var themeCandidate in result.Themes)
             {
-                if (string.IsNullOrWhiteSpace(outcomeCandidate.Code) || string.IsNullOrWhiteSpace(outcomeCandidate.Description))
+                if (string.IsNullOrWhiteSpace(themeCandidate.Name))
                 {
                     continue;
                 }
 
-                var outcome = new LearningOutcome
+                if (!themesByName.TryGetValue(themeCandidate.Name, out var theme))
                 {
-                    Code = outcomeCandidate.Code,
-                    Grade = document.Grade.Value,
+                    theme = new Domain.Entities.Theme
+                    {
+                        Grade = document.Grade.Value,
+                        Subject = document.Subject,
+                        Name = themeCandidate.Name,
+                        MaarifStandardVersionId = standardVersion.Id,
+                        SourceDocumentId = referenceDocumentId,
+                        SourcePage = themeCandidate.SourcePage,
+                        ApprovalStatus = ApprovalStatus.Draft
+                    };
+                    db.Themes.Add(theme);
+                    themesByName[themeCandidate.Name] = theme;
+                    themesCreated++;
+                }
+
+                foreach (var outcomeCandidate in themeCandidate.LearningOutcomes)
+                {
+                    if (string.IsNullOrWhiteSpace(outcomeCandidate.Code) || string.IsNullOrWhiteSpace(outcomeCandidate.Description))
+                    {
+                        continue;
+                    }
+
+                    if (outcomesByCode.ContainsKey(outcomeCandidate.Code))
+                    {
+                        continue;
+                    }
+
+                    var outcome = new LearningOutcome
+                    {
+                        Code = outcomeCandidate.Code,
+                        Grade = document.Grade.Value,
+                        Subject = document.Subject,
+                        Description = outcomeCandidate.Description,
+                        Theme = theme,
+                        MaarifStandardVersionId = standardVersion.Id,
+                        SourceDocumentId = referenceDocumentId,
+                        ApprovalStatus = ApprovalStatus.Draft
+                    };
+                    db.LearningOutcomes.Add(outcome);
+                    outcomesByCode[outcomeCandidate.Code] = outcome;
+                    outcomesCreated++;
+
+                    foreach (var frameworkName in outcomeCandidate.ContentFrameworks.Where(f => !string.IsNullOrWhiteSpace(f)))
+                    {
+                        db.ContentFrameworks.Add(new ContentFramework
+                        {
+                            LearningOutcome = outcome,
+                            Name = frameworkName,
+                            SourceDocumentId = referenceDocumentId,
+                            SourcePage = outcomeCandidate.SourcePage,
+                            ApprovalStatus = ApprovalStatus.Draft
+                        });
+                        frameworksCreated++;
+                    }
+
+                    foreach (var componentDescription in outcomeCandidate.ProcessComponents.Where(p => !string.IsNullOrWhiteSpace(p)))
+                    {
+                        db.ProcessComponents.Add(new ProcessComponent
+                        {
+                            LearningOutcome = outcome,
+                            Description = componentDescription,
+                            SourceDocumentId = referenceDocumentId,
+                            SourcePage = outcomeCandidate.SourcePage,
+                            ApprovalStatus = ApprovalStatus.Draft
+                        });
+                        componentsCreated++;
+                    }
+                }
+            }
+
+            foreach (var skillCandidate in result.FieldSkills)
+            {
+                if (string.IsNullOrWhiteSpace(skillCandidate.Code) || string.IsNullOrWhiteSpace(skillCandidate.Name))
+                {
+                    continue;
+                }
+
+                // Aynı dokümanın tekrar çıkarımında (idempotent yeniden deneme) veya bu çalıştırmanın
+                // önceki bir batch'inde zaten eklenmiş Subject+Code çiftini tekrar Draft olarak
+                // eklemez (unique index'i de korur).
+                var alreadyExists = await db.FieldSkills
+                    .AnyAsync(f => f.Subject == document.Subject && f.Code == skillCandidate.Code, ct)
+                    || db.ChangeTracker.Entries<FieldSkill>()
+                        .Any(e => e.Entity.Subject == document.Subject && e.Entity.Code == skillCandidate.Code);
+                if (alreadyExists)
+                {
+                    continue;
+                }
+
+                db.FieldSkills.Add(new FieldSkill
+                {
                     Subject = document.Subject,
-                    Description = outcomeCandidate.Description,
-                    Theme = theme,
-                    MaarifStandardVersionId = standardVersion.Id,
+                    Code = skillCandidate.Code,
+                    Name = skillCandidate.Name,
                     SourceDocumentId = referenceDocumentId,
+                    SourcePage = skillCandidate.SourcePage,
                     ApprovalStatus = ApprovalStatus.Draft
-                };
-                db.LearningOutcomes.Add(outcome);
-                outcomesCreated++;
-
-                foreach (var frameworkName in outcomeCandidate.ContentFrameworks.Where(f => !string.IsNullOrWhiteSpace(f)))
-                {
-                    db.ContentFrameworks.Add(new ContentFramework
-                    {
-                        LearningOutcome = outcome,
-                        Name = frameworkName,
-                        SourceDocumentId = referenceDocumentId,
-                        SourcePage = outcomeCandidate.SourcePage,
-                        ApprovalStatus = ApprovalStatus.Draft
-                    });
-                    frameworksCreated++;
-                }
-
-                foreach (var componentDescription in outcomeCandidate.ProcessComponents.Where(p => !string.IsNullOrWhiteSpace(p)))
-                {
-                    db.ProcessComponents.Add(new ProcessComponent
-                    {
-                        LearningOutcome = outcome,
-                        Description = componentDescription,
-                        SourceDocumentId = referenceDocumentId,
-                        SourcePage = outcomeCandidate.SourcePage,
-                        ApprovalStatus = ApprovalStatus.Draft
-                    });
-                    componentsCreated++;
-                }
-            }
-        }
-
-        foreach (var skillCandidate in result.FieldSkills)
-        {
-            if (string.IsNullOrWhiteSpace(skillCandidate.Code) || string.IsNullOrWhiteSpace(skillCandidate.Name))
-            {
-                continue;
+                });
+                skillsCreated++;
             }
 
-            // Aynı dokümanın tekrar çıkarımında (idempotent yeniden deneme) zaten var olan
-            // Subject+Code çiftini tekrar Draft olarak eklemez (unique index'i de korur).
-            var alreadyExists = await db.FieldSkills
-                .AnyAsync(f => f.Subject == document.Subject && f.Code == skillCandidate.Code, ct);
-            if (alreadyExists)
+            db.AiRuns.Add(new AiRun
             {
-                continue;
-            }
-
-            db.FieldSkills.Add(new FieldSkill
-            {
-                Subject = document.Subject,
-                Code = skillCandidate.Code,
-                Name = skillCandidate.Name,
-                SourceDocumentId = referenceDocumentId,
-                SourcePage = skillCandidate.SourcePage,
-                ApprovalStatus = ApprovalStatus.Draft
+                Stage = PipelineStage.CurriculumExtraction,
+                ModelTier = llmProvider.Name == "local-heuristic" ? ModelTier.Cheap : ModelTier.Mid,
+                Provider = result.Usage.Provider,
+                Model = result.Usage.Model,
+                InputTokens = result.Usage.InputTokens,
+                OutputTokens = result.Usage.OutputTokens,
+                CostUsd = result.Usage.CostUsd,
+                LatencyMs = result.Usage.LatencyMs
             });
-            skillsCreated++;
         }
-
-        db.AiRuns.Add(new AiRun
-        {
-            Stage = PipelineStage.CurriculumExtraction,
-            ModelTier = llmProvider.Name == "local-heuristic" ? ModelTier.Cheap : ModelTier.Mid,
-            Provider = result.Usage.Provider,
-            Model = result.Usage.Model,
-            InputTokens = result.Usage.InputTokens,
-            OutputTokens = result.Usage.OutputTokens,
-            CostUsd = result.Usage.CostUsd,
-            LatencyMs = result.Usage.LatencyMs
-        });
 
         await db.SaveChangesAsync(ct);
 

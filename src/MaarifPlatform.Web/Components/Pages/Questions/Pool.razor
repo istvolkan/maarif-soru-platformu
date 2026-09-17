@@ -1,0 +1,241 @@
+@page "/questions/pool"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = "Admin,Editor")]
+@using System.Text.Json
+@using MaarifPlatform.Domain.Enums
+@using MaarifPlatform.Infrastructure.Persistence
+@using Microsoft.EntityFrameworkCore
+@inject IServiceScopeFactory ScopeFactory
+
+<PageTitle>Soru Havuzu</PageTitle>
+<h1 class="page-title">Soru Havuzu</h1>
+<p class="page-intro">
+    AI tarafından üretilmiş ve gerçek çok-model doğrulama hattından (Curriculum Validator →
+    Judge → Benzerlik Kontrolü) geçmiş sorular — yalnızca öğretmen "Onayla" dedikten sonra
+    kalıcı olarak onaylanmış sayılır.
+</p>
+
+@if (_error is not null)
+{
+    <p class="error">@_error</p>
+}
+@if (_message is not null)
+{
+    <p class="ok">@_message</p>
+}
+
+@if (_questions is null)
+{
+    <p>Yükleniyor...</p>
+}
+else if (_questions.Count == 0)
+{
+    <p>Havuzda incelenecek soru yok. <a href="questions/generate">Soru Üret</a>'ten yeni sorular oluşturabilirsiniz.</p>
+}
+else
+{
+    <div class="actions pool-toolbar">
+        <button disabled="@_busy" @onclick="ApproveAllAsync">Tümünü Onayla</button>
+    </div>
+
+    @foreach (var q in _questions)
+    {
+        <div class="card pool-card">
+            <div class="pool-question">@q.QuestionText</div>
+
+            @if (q.Options.Count > 0)
+            {
+                <ul class="pool-options">
+                    @foreach (var opt in q.Options)
+                    {
+                        <li class="@(opt.Label == q.CorrectLabel ? "correct" : "")">@opt.Label) @opt.Text</li>
+                    }
+                </ul>
+            }
+
+            <div class="pool-meta">
+                @(q.Grade). Sınıf • @q.Subject
+                @if (!string.IsNullOrEmpty(q.LearningOutcomeCode)) { <span> • @q.LearningOutcomeCode</span> }
+                @if (!string.IsNullOrEmpty(q.Skill)) { <span> • @q.Skill</span> }
+                @if (!string.IsNullOrEmpty(q.Difficulty)) { <span> • @q.Difficulty</span> }
+            </div>
+
+            @if (_expanded.Contains(q.Id))
+            {
+                <div class="pool-solution">
+                    <p><strong>Çözüm:</strong> @(q.Solution ?? "-")</p>
+                    @if (q.Distractors.Count > 0)
+                    {
+                        <p><strong>Çeldirici / Kavram Yanılgısı Analizi:</strong></p>
+                        <ul>
+                            @foreach (var d in q.Distractors)
+                            {
+                                <li>@d.OptionLabel — @(d.MisconceptionCode ?? "genel") @(string.IsNullOrEmpty(d.Explanation) ? "" : $": {d.Explanation}")</li>
+                            }
+                        </ul>
+                    }
+                </div>
+            }
+
+            <div class="actions">
+                <button class="secondary" @onclick="() => ToggleSolution(q.Id)">
+                    @(_expanded.Contains(q.Id) ? "Çözümü Gizle" : "Çözümü Gör")
+                </button>
+                <button disabled="@_busy" @onclick="() => ApproveAsync(q.Id)">Onayla</button>
+                <button disabled="@_busy" class="secondary" @onclick="() => RejectAsync(q.Id)">Reddet</button>
+                <a class="btn btn-secondary" href="@($"questions/{q.Id}")">Detay</a>
+            </div>
+        </div>
+    }
+}
+
+<style>
+    .pool-toolbar { margin-bottom: 1.25rem; }
+    .pool-card { margin-bottom: 1.25rem; }
+    .pool-question { font-size: 1.05rem; font-weight: 600; margin-bottom: 0.75rem; }
+    .pool-options { list-style: none; margin: 0 0 0.75rem 0; padding: 0; }
+    .pool-options li { padding: 0.25rem 0; }
+    .pool-options li.correct { font-weight: 700; color: var(--z-success); }
+    .pool-meta { font-size: 0.85rem; color: var(--z-muted); margin-bottom: 0.75rem; }
+    .pool-solution { background: var(--z-bg, #f7f7f7); border-radius: var(--z-radius); padding: 0.75rem 1rem; margin-bottom: 0.75rem; font-size: 0.92rem; }
+</style>
+
+@code {
+    private List<PoolQuestionRow>? _questions;
+    private readonly HashSet<Guid> _expanded = new();
+    private bool _busy;
+    private string? _error;
+    private string? _message;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        await using var scope = ScopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<MaarifDbContext>();
+
+        var rows = await db.Questions
+            .Where(q => q.Book!.SourceType == SourceType.Generated && q.Status == QuestionStatus.AiApproved)
+            .OrderByDescending(q => q.UpdatedAt)
+            .Select(q => new
+            {
+                q.Id,
+                Dna = db.QuestionDnas
+                    .Where(d => d.QuestionVersion!.QuestionId == q.Id)
+                    .OrderByDescending(d => d.CreatedAt)
+                    .FirstOrDefault(),
+                VersionId = db.QuestionVersions
+                    .Where(v => v.QuestionId == q.Id)
+                    .OrderByDescending(v => v.VersionNo)
+                    .Select(v => v.Id)
+                    .FirstOrDefault()
+            })
+            .ToListAsync();
+
+        _questions = new List<PoolQuestionRow>();
+        foreach (var row in rows)
+        {
+            if (row.Dna is null)
+            {
+                continue;
+            }
+
+            var options = string.IsNullOrWhiteSpace(row.Dna.OriginalOptionsJson)
+                ? new List<OptionCandidate>()
+                : JsonSerializer.Deserialize<List<OptionCandidate>>(row.Dna.OriginalOptionsJson!) ?? new();
+
+            var correctLabel = options.FirstOrDefault(o => o.Text == row.Dna.CorrectAnswer)?.Label;
+
+            var distractors = await db.Distractors
+                .Where(d => d.QuestionVersionId == row.VersionId)
+                .Select(d => new DistractorRow(d.OptionLabel, d.MisconceptionCode, d.Explanation))
+                .ToListAsync();
+
+            _questions.Add(new PoolQuestionRow(
+                row.Id, row.Dna.OriginalQuestion ?? "(soru metni yok)",
+                options.Select(o => (o.Label, o.Text)).ToList(), correctLabel,
+                row.Dna.Solution, row.Dna.Grade ?? 0, row.Dna.Subject ?? "-",
+                row.Dna.LearningOutcomeCode, row.Dna.FieldSkill, row.Dna.Difficulty?.ToString(),
+                distractors));
+        }
+    }
+
+    private void ToggleSolution(Guid questionId)
+    {
+        if (!_expanded.Add(questionId))
+        {
+            _expanded.Remove(questionId);
+        }
+    }
+
+    private async Task ApproveAsync(Guid questionId) => await SetStatusAsync(questionId, QuestionStatus.EditorApproved);
+
+    private async Task RejectAsync(Guid questionId) => await SetStatusAsync(questionId, QuestionStatus.Rejected);
+
+    private async Task SetStatusAsync(Guid questionId, QuestionStatus status)
+    {
+        _busy = true;
+        _error = null;
+        _message = null;
+        await using var scope = ScopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<MaarifDbContext>();
+
+        try
+        {
+            var question = await db.Questions.FirstAsync(q => q.Id == questionId);
+            question.Status = status;
+            question.UpdatedAt = DateTimeOffset.UtcNow;
+            await db.SaveChangesAsync();
+            _message = status == QuestionStatus.EditorApproved ? "Soru onaylandı." : "Soru reddedildi.";
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+
+        await LoadAsync();
+    }
+
+    private async Task ApproveAllAsync()
+    {
+        _busy = true;
+        _error = null;
+        _message = null;
+        await using var scope = ScopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<MaarifDbContext>();
+
+        try
+        {
+            var ids = _questions!.Select(q => q.Id).ToList();
+            var questions = await db.Questions.Where(q => ids.Contains(q.Id)).ToListAsync();
+            foreach (var question in questions)
+            {
+                question.Status = QuestionStatus.EditorApproved;
+                question.UpdatedAt = DateTimeOffset.UtcNow;
+            }
+            await db.SaveChangesAsync();
+            _message = $"{questions.Count} soru onaylandı.";
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+
+        await LoadAsync();
+    }
+
+    private sealed record OptionCandidate(string Label, string Text);
+    private sealed record DistractorRow(string OptionLabel, string? MisconceptionCode, string? Explanation);
+    private sealed record PoolQuestionRow(
+        Guid Id, string QuestionText, List<(string Label, string Text)> Options, string? CorrectLabel,
+        string? Solution, int Grade, string Subject, string? LearningOutcomeCode, string? Skill,
+        string? Difficulty, List<DistractorRow> Distractors);
+}

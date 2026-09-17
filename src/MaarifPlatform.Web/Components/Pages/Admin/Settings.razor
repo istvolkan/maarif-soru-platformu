@@ -162,6 +162,7 @@
         </div>
         <div class="field"><label>Maks. Yeniden Üretim Denemesi</label><InputNumber @bind-Value="_form.GenerationMaxRegenerationAttempts" /></div>
         <div class="field"><label>Benzerlik Reddetme Eşiği (0-1)</label><InputNumber @bind-Value="_form.GenerationSimilarityRejectThreshold" step="0.01" /></div>
+        <div class="field"><label>Maks. Soru Adedi (tek seferde)</label><InputNumber @bind-Value="_form.GenerationMaxQuestionCount" /></div>
         <p class="note">Domain/matematik doğruluğu ve çapraz-model consensus için yukarıdaki Judge ayarları kullanılır — Soru Üret pipeline'ı ayrı bir Judge kurmaz.</p>
     </fieldset>
 
@@ -269,6 +270,7 @@
         _form.CurriculumValidatorProvider = Configuration["Generation:CurriculumValidatorProvider"] ?? "";
         _form.GenerationMaxRegenerationAttempts = Configuration.GetValue<int?>("Generation:MaxRegenerationAttempts") ?? 2;
         _form.GenerationSimilarityRejectThreshold = Configuration.GetValue<double?>("Generation:SimilarityRejectThreshold") ?? 0.92;
+        _form.GenerationMaxQuestionCount = Configuration.GetValue<int?>("Generation:MaxQuestionCount") ?? 50;
 
         _form.EmbeddingsProvider = Configuration["Embeddings:Provider"] ?? "Local";
         _form.EmbeddingsModel = Configuration["Embeddings:OpenAI:Model"] ?? "text-embedding-3-small";
@@ -421,6 +423,7 @@
             await SetAsync("Generation:CurriculumValidatorProvider", _form.CurriculumValidatorProvider);
             await SetAsync("Generation:MaxRegenerationAttempts", _form.GenerationMaxRegenerationAttempts?.ToString());
             await SetAsync("Generation:SimilarityRejectThreshold", _form.GenerationSimilarityRejectThreshold?.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            await SetAsync("Generation:MaxQuestionCount", _form.GenerationMaxQuestionCount?.ToString());
 
             await SetAsync("Embeddings:Provider", _form.EmbeddingsProvider);
             await SetAsync("Embeddings:OpenAI:Model", _form.EmbeddingsModel);
@@ -465,5 +468,6 @@
         public string CurriculumValidatorProvider { get; set; } = "";
         public int? GenerationMaxRegenerationAttempts { get; set; }
         public double? GenerationSimilarityRejectThreshold { get; set; }
+        public int? GenerationMaxQuestionCount { get; set; }
     }
 }

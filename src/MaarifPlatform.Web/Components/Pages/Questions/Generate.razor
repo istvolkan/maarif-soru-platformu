@@ -1,63 +1,455 @@
 @page "/questions/generate"
 @rendermode InteractiveServer
 @attribute [Authorize(Roles = "Admin,Editor")]
-@using MaarifPlatform.Application.Providers
+@using MaarifPlatform.Domain.Enums
+@using MaarifPlatform.Infrastructure.Ai
 @using MaarifPlatform.Infrastructure.Analysis
+@using MaarifPlatform.Infrastructure.Curriculum
+@using MaarifPlatform.Infrastructure.Persistence
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.Extensions.Options
 @inject IServiceScopeFactory ScopeFactory
 @inject NavigationManager NavigationManager
 
-<PageTitle>Yeni Soru Üret</PageTitle>
-<h1 class="page-title">Yeni Soru Üret</h1>
-<p class="page-intro">PDF kaynağı olmadan, sıfırdan bir soru üretir — RAG ile ilgili Sınıf/Ders için ingest edilmiş referans dokümanı varsa üretim ona dayanır.</p>
+<PageTitle>Soru Üret</PageTitle>
+<h1 class="page-title">Soru Üret</h1>
+<p class="page-intro">
+    Prompt yazmanıza gerek yok — yalnızca aşağıdaki alanlardan seçim yapın. Sistem seçimlerinizden
+    kendi internal prompt'unu oluşturur ve gerçek bir çok-model doğrulama hattından (Generator →
+    Curriculum Validator → Judge → Benzerlik Kontrolü) geçirir. Tema/Kazanım/İçerik Çerçevesi/
+    Alan Becerisi listeleri yalnızca admin onaylı gerçek müfredat verisinden gelir
+    (bkz. <a href="admin/curriculum-review">Müfredat Onayı</a>) — hiçbiri AI tarafından uydurulmaz.
+</p>
 
 @if (_error is not null)
 {
     <p class="error">@_error</p>
 }
 
-<div class="card">
-    <EditForm Model="_form" OnValidSubmit="GenerateAsync">
-        <DataAnnotationsValidator />
-        <div class="field"><label>Sınıf</label><InputNumber @bind-Value="_form.Grade" /></div>
-        <div class="field"><label>Ders</label><InputText @bind-Value="_form.Subject" /></div>
-        <div class="field"><label>Tema</label><InputText @bind-Value="_form.Theme" /></div>
-        <div class="field"><label>Kazanım Kodu</label><InputText @bind-Value="_form.LearningOutcomeCode" /></div>
+@if (!_running && _finalSummary is null)
+{
+    <div class="card">
         <div class="field">
-            <label>Zorluk</label>
-            <InputSelect @bind-Value="_form.Difficulty">
-                @foreach (var level in Enum.GetNames<DifficultyLevel>())
+            <label>Sınıf</label>
+            <select @bind="_grade" @bind:after="OnGradeChangedAsync">
+                <option value="">— seçin —</option>
+                @foreach (var g in _grades)
                 {
-                    <option value="@level">@level</option>
+                    <option value="@g">@g. Sınıf</option>
                 }
-            </InputSelect>
+            </select>
         </div>
-        <div class="field"><label>Soru Tipi</label><InputText @bind-Value="_form.QuestionType" placeholder="örn. ÇoktanSeçmeli" /></div>
-        <div class="field"><label>Bağlam/Senaryo</label><InputTextArea @bind-Value="_form.Context" rows="3" /></div>
-        <div class="field"><label>Muhakeme Tipi</label><InputText @bind-Value="_form.ReasoningType" placeholder="örn. AkılYürütme" /></div>
-        <button type="submit" disabled="@_busy">@(_busy ? "Üretiliyor..." : "Üret")</button>
-    </EditForm>
-</div>
+
+        @if (_grade is not null)
+        {
+            <div class="field">
+                <label>Ders</label>
+                <select @bind="_subject" @bind:after="OnSubjectChangedAsync">
+                    <option value="">— seçin —</option>
+                    @foreach (var s in _subjects)
+                    {
+                        <option value="@s">@s</option>
+                    }
+                </select>
+            </div>
+        }
+
+        @if (_subject is not null && !_curriculumAvailable)
+        {
+            <p class="error">
+                Bu kombinasyon için doğrulanmış öğretim programı verisi bulunamadı.
+                <a href="admin/reference-documents">Referans Dokümanları</a>'ndan bir MEB dokümanı
+                yükleyip <a href="admin/curriculum-review">Müfredat Onayı</a>'ndan onaylamanız gerekiyor.
+            </p>
+        }
+
+        @if (_subject is not null && _curriculumAvailable)
+        {
+            <div class="field">
+                <label>Tema</label>
+                <select @bind="_themeId" @bind:after="OnThemeChangedAsync">
+                    <option value="">— seçin —</option>
+                    @foreach (var t in _themes)
+                    {
+                        <option value="@t.Id">@t.Name</option>
+                    }
+                </select>
+            </div>
+        }
+
+        @if (_themeId is not null)
+        {
+            <div class="field">
+                <label>Öğrenme Çıktısı / Kazanım</label>
+                <select @bind="_learningOutcomeId" @bind:after="OnLearningOutcomeChangedAsync">
+                    <option value="">— seçin —</option>
+                    @foreach (var lo in _learningOutcomes)
+                    {
+                        <option value="@lo.Id">@lo.Code — @Truncate(lo.Description, 70)</option>
+                    }
+                </select>
+                @if (_selectedLearningOutcome is not null)
+                {
+                    <p class="note">@_selectedLearningOutcome.Description</p>
+                }
+            </div>
+        }
+
+        @if (_learningOutcomeId is not null)
+        {
+            <div class="field">
+                <label>Konu / İçerik Çerçevesi (opsiyonel, çoklu seçim)</label>
+                @if (_contentFrameworks.Count == 0)
+                {
+                    <p class="note">Bu kazanım için onaylanmış içerik çerçevesi kaydı yok — atlanabilir.</p>
+                }
+                else
+                {
+                    @foreach (var cf in _contentFrameworks)
+                    {
+                        <label class="checkbox-option">
+                            <input type="checkbox" checked="@_selectedContentFrameworkNames.Contains(cf.Name)"
+                                   @onchange="e => ToggleSetValue(_selectedContentFrameworkNames, cf.Name, e.Value)" />
+                            @cf.Name
+                        </label>
+                    }
+                }
+            </div>
+
+            <div class="field">
+                <label>Soru Tipi</label>
+                <label class="checkbox-option">
+                    <input type="checkbox" checked="@_mixedQuestionTypes" @onchange="e => _mixedQuestionTypes = (bool)(e.Value ?? false)" />
+                    <strong>Karma</strong> (soru tipleri arasında pedagojik olarak dengeli dağıt)
+                </label>
+                @if (!_mixedQuestionTypes)
+                {
+                    @foreach (var qt in QuestionTypeOptions)
+                    {
+                        <label class="checkbox-option">
+                            <input type="checkbox" checked="@_selectedQuestionTypes.Contains(qt)"
+                                   @onchange="e => ToggleSetValue(_selectedQuestionTypes, qt, e.Value)" />
+                            @qt
+                        </label>
+                    }
+                }
+            </div>
+
+            <div class="field">
+                <label>Zorluk</label>
+                <select @bind="_difficulty">
+                    @foreach (var d in DifficultyOptions)
+                    {
+                        <option value="@d.Value">@d.Label</option>
+                    }
+                </select>
+            </div>
+
+            <div class="field">
+                <label>Alan Becerisi / Muhakeme</label>
+                <label class="checkbox-option">
+                    <input type="checkbox" checked="@_autoSkill" @onchange="e => _autoSkill = (bool)(e.Value ?? false)" />
+                    <strong>Otomatik Seç</strong>
+                </label>
+                @if (!_autoSkill)
+                {
+                    @if (_fieldSkills.Count == 0)
+                    {
+                        <p class="note">Bu ders için onaylanmış alan becerisi kaydı yok — Otomatik kullanın.</p>
+                    }
+                    @foreach (var fs in _fieldSkills)
+                    {
+                        <label class="checkbox-option">
+                            <input type="checkbox" checked="@_selectedSkillCodes.Contains(fs.Code)"
+                                   @onchange="e => ToggleSetValue(_selectedSkillCodes, fs.Code, e.Value)" />
+                            @fs.Code — @fs.Name
+                        </label>
+                    }
+                }
+            </div>
+
+            <div class="field">
+                <label>Bağlam / Senaryo</label>
+                <select @bind="_context">
+                    @foreach (var c in ContextOptions)
+                    {
+                        <option value="@c">@c</option>
+                    }
+                </select>
+            </div>
+
+            <div class="field">
+                <label>Görsel Kullanımı</label>
+                <select @bind="_visualUsage" disabled>
+                    <option value="Görsel Kullanma">Görsel Kullanma</option>
+                </select>
+                <p class="note">Görsel/grafik/diyagram üretim motoru Faz 2'de eklenecek — bu sürümde yalnızca metin tabanlı sorular üretilir.</p>
+            </div>
+
+            <div class="field">
+                <label>Soru Adedi</label>
+                <input type="number" min="1" max="@_maxQuestionCount" value="@_count"
+                       @onchange="e => _count = int.TryParse(e.Value?.ToString(), out var v) ? v : _count" />
+            </div>
+
+            <details class="advanced-settings">
+                <summary>Gelişmiş Ayarlar</summary>
+                <label class="checkbox-option"><input type="checkbox" @bind="_showSolution" /> Çözüm göster</label>
+                <label class="checkbox-option"><input type="checkbox" @bind="_showAnswerKey" /> Cevap anahtarı göster</label>
+                <label class="checkbox-option"><input type="checkbox" @bind="_showOutcomeTag" /> Kazanım etiketi göster</label>
+                <label class="checkbox-option"><input type="checkbox" @bind="_showSkillTag" /> Beceri etiketi göster</label>
+                <label class="checkbox-option"><input type="checkbox" @bind="_showDifficultyTag" /> Zorluk etiketi göster</label>
+                <label class="checkbox-option"><input type="checkbox" @bind="_showMisconceptionAnalysis" /> Çeldirici / kavram yanılgısı analizini göster</label>
+            </details>
+
+            <button disabled="@(!CanGenerate)" @onclick="GenerateAsync">Üret</button>
+        }
+    </div>
+}
+
+@if (_running || _finalSummary is not null)
+{
+    <div class="card">
+        <h2>Üretim Durumu</h2>
+        <ul class="progress-log">
+            @foreach (var line in _progressLog)
+            {
+                <li>@line</li>
+            }
+        </ul>
+
+        @if (_finalSummary is not null)
+        {
+            <p class="ok">@_finalSummary</p>
+            <div class="actions">
+                <a class="btn" href="questions/pool">Soru Havuzuna Git</a>
+                <button class="secondary" @onclick="ResetAsync">Yeni Üretim</button>
+            </div>
+        }
+    </div>
+}
+
+<style>
+    .checkbox-option { display: block; font-weight: 400; margin: 0.25rem 0; }
+    .checkbox-option input { margin-right: 0.4rem; }
+    .advanced-settings { margin: 1rem 0; border: 1px solid var(--z-border); border-radius: var(--z-radius); padding: 0.75rem 1rem; }
+    .advanced-settings summary { cursor: pointer; font-weight: 600; }
+    .progress-log { list-style: none; margin: 0; padding: 0; font-size: 0.9rem; max-height: 320px; overflow-y: auto; }
+    .progress-log li { padding: 0.2rem 0; border-bottom: 1px dashed var(--z-border); }
+    .note { font-size: 0.85rem; color: var(--z-muted); margin: 0.25rem 0; }
+</style>
 
 @code {
-    private GenerateForm _form = new();
-    private bool _busy;
+    private List<int> _grades = new();
+    private List<string> _subjects = new();
+    private List<ThemeOption> _themes = new();
+    private List<LearningOutcomeOption> _learningOutcomes = new();
+    private List<ContentFrameworkOption> _contentFrameworks = new();
+    private List<FieldSkillOption> _fieldSkills = new();
+
+    private int? _grade;
+    private string? _subject;
+    private Guid? _themeId;
+    private Guid? _learningOutcomeId;
+    private LearningOutcomeOption? _selectedLearningOutcome;
+    private bool _curriculumAvailable = true;
+
+    private readonly HashSet<string> _selectedContentFrameworkNames = new();
+    private bool _mixedQuestionTypes = true;
+    private readonly HashSet<string> _selectedQuestionTypes = new();
+    private string _difficulty = "Balanced";
+    private bool _autoSkill = true;
+    private readonly HashSet<string> _selectedSkillCodes = new();
+    private string _context = "Otomatik";
+    private string _visualUsage = "Görsel Kullanma";
+    private int _count = 5;
+    private int _maxQuestionCount = 50;
+
+    private bool _showSolution = true;
+    private bool _showAnswerKey = true;
+    private bool _showOutcomeTag = true;
+    private bool _showSkillTag = true;
+    private bool _showDifficultyTag;
+    private bool _showMisconceptionAnalysis;
+
+    private bool _running;
     private string? _error;
+    private string? _finalSummary;
+    private readonly List<string> _progressLog = new();
+
+    private static readonly string[] QuestionTypeOptions =
+    [
+        "Çoktan Seçmeli", "Açık Uçlu", "Kısa Cevaplı", "Yapılandırılmış Açık Uçlu",
+        "Doğru/Yanlış + Gerekçe", "Eşleştirme", "Tablo Yorumlama", "Grafik Yorumlama",
+        "Görsel Yorumlama", "Senaryo Temelli", "Problem Temelli"
+    ];
+
+    private static readonly string[] ContextOptions =
+    [
+        "Otomatik", "Günlük Yaşam", "Bilim ve Teknoloji", "Çevre / Sürdürülebilirlik",
+        "Ekonomi / Finans", "Spor", "Ulaşım", "Enerji", "Sağlık", "Mimari / Tasarım",
+        "Veri / İstatistik", "Okul Yaşamı", "Disiplinler Arası", "Bağlamsız / Saf Matematik"
+    ];
+
+    private static readonly (string Value, string Label)[] DifficultyOptions =
+    [
+        ("Balanced", "Dengeli Dağılım"),
+        (nameof(DifficultyLevel.Easy), "Kolay"),
+        (nameof(DifficultyLevel.Medium), "Orta"),
+        (nameof(DifficultyLevel.Hard), "Zor"),
+        (nameof(DifficultyLevel.VeryHard), "İleri Düzey")
+    ];
+
+    private bool CanGenerate =>
+        _learningOutcomeId is not null
+        && (_mixedQuestionTypes || _selectedQuestionTypes.Count > 0)
+        && _count is >= 1 && _count <= _maxQuestionCount;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await using var scope = ScopeFactory.CreateAsyncScope();
+        var curriculum = scope.ServiceProvider.GetRequiredService<CurriculumQueryService>();
+        var routing = scope.ServiceProvider.GetRequiredService<IOptionsMonitor<GenerationRoutingOptions>>();
+
+        _grades = (await curriculum.GetGradesAsync()).ToList();
+        _maxQuestionCount = routing.CurrentValue.MaxQuestionCount;
+    }
+
+    private async Task OnGradeChangedAsync()
+    {
+        _subject = null; _themeId = null; _learningOutcomeId = null; _selectedLearningOutcome = null;
+        _subjects = new(); _themes = new(); _learningOutcomes = new(); _contentFrameworks = new();
+
+        if (_grade is null)
+        {
+            return;
+        }
+
+        await using var scope = ScopeFactory.CreateAsyncScope();
+        var curriculum = scope.ServiceProvider.GetRequiredService<CurriculumQueryService>();
+        _subjects = (await curriculum.GetSubjectsAsync(_grade.Value)).ToList();
+    }
+
+    private async Task OnSubjectChangedAsync()
+    {
+        _themeId = null; _learningOutcomeId = null; _selectedLearningOutcome = null;
+        _themes = new(); _learningOutcomes = new(); _contentFrameworks = new(); _fieldSkills = new();
+
+        if (_subject is null || _grade is null)
+        {
+            return;
+        }
+
+        await using var scope = ScopeFactory.CreateAsyncScope();
+        var curriculum = scope.ServiceProvider.GetRequiredService<CurriculumQueryService>();
+        _curriculumAvailable = await curriculum.HasApprovedCurriculumAsync(_grade.Value, _subject);
+        if (!_curriculumAvailable)
+        {
+            return;
+        }
+
+        _themes = (await curriculum.GetThemesAsync(_grade.Value, _subject)).ToList();
+        _fieldSkills = (await curriculum.GetFieldSkillsAsync(_subject)).ToList();
+    }
+
+    private async Task OnThemeChangedAsync()
+    {
+        _learningOutcomeId = null; _selectedLearningOutcome = null;
+        _learningOutcomes = new(); _contentFrameworks = new();
+
+        if (_themeId is null)
+        {
+            return;
+        }
+
+        await using var scope = ScopeFactory.CreateAsyncScope();
+        var curriculum = scope.ServiceProvider.GetRequiredService<CurriculumQueryService>();
+        _learningOutcomes = (await curriculum.GetLearningOutcomesAsync(_themeId.Value)).ToList();
+    }
+
+    private async Task OnLearningOutcomeChangedAsync()
+    {
+        _contentFrameworks = new();
+        _selectedLearningOutcome = _learningOutcomes.FirstOrDefault(lo => lo.Id == _learningOutcomeId);
+
+        if (_learningOutcomeId is null)
+        {
+            return;
+        }
+
+        await using var scope = ScopeFactory.CreateAsyncScope();
+        var curriculum = scope.ServiceProvider.GetRequiredService<CurriculumQueryService>();
+        _contentFrameworks = (await curriculum.GetContentFrameworksAsync(_learningOutcomeId.Value)).ToList();
+    }
+
+    private static void ToggleSetValue(HashSet<string> set, string value, object? isChecked)
+    {
+        if (isChecked is true)
+        {
+            set.Add(value);
+        }
+        else
+        {
+            set.Remove(value);
+        }
+    }
 
     private async Task GenerateAsync()
     {
-        _busy = true;
+        _running = true;
         _error = null;
+        _finalSummary = null;
+        _progressLog.Clear();
+        StateHasChanged();
 
         await using var scope = ScopeFactory.CreateAsyncScope();
         var service = scope.ServiceProvider.GetRequiredService<GenerationOrchestrationService>();
 
+        // Process components §12 grounding — kod curriculum tablosundan gelir, LLM'e olduğu
+        // gibi aktarılır (kendisi üretmez), bkz. GenerationOrchestrationService.
+        await using var pcScope = ScopeFactory.CreateAsyncScope();
+        var db = pcScope.ServiceProvider.GetRequiredService<MaarifDbContext>();
+        var processComponents = await db.ProcessComponents
+            .Where(pc => pc.LearningOutcomeId == _learningOutcomeId && pc.ApprovalStatus == ApprovalStatus.Approved)
+            .Select(pc => pc.Description)
+            .ToListAsync();
+
+        var questionTypes = _mixedQuestionTypes ? QuestionTypeOptions.ToList() : _selectedQuestionTypes.ToList();
+
+        var request = new GenerateBatchRequest(
+            Grade: _grade!.Value,
+            Subject: _subject!,
+            Theme: _themes.First(t => t.Id == _themeId).Name,
+            LearningOutcomeCode: _selectedLearningOutcome!.Code,
+            LearningOutcomeDescription: _selectedLearningOutcome.Description,
+            ProcessComponents: processComponents,
+            SkillCodes: _autoSkill ? [] : _selectedSkillCodes.ToList(),
+            DifficultySelection: _difficulty,
+            QuestionTypes: questionTypes,
+            ContentFrameworkNames: _selectedContentFrameworkNames.ToList(),
+            Context: _context,
+            ReasoningRequirement: _autoSkill ? "Otomatik" : string.Join(", ", _selectedSkillCodes),
+            Count: _count);
+
         try
         {
-            var result = await service.GenerateAsync(new GenerateQuestionRequest(
-                _form.Grade, _form.Subject, _form.Theme, _form.LearningOutcomeCode,
-                _form.Difficulty, _form.QuestionType, _form.Context, _form.ReasoningType, []));
-
-            NavigationManager.NavigateTo($"questions/{result.QuestionId}");
+            await foreach (var progress in service.GenerateBatchAsync(request))
+            {
+                if (progress.IsFinal)
+                {
+                    _finalSummary = string.IsNullOrWhiteSpace(progress.Message) ? progress.Stage : progress.Message;
+                }
+                else if (progress.Outcome is not null)
+                {
+                    _progressLog.Add($"Soru {progress.SlotNo}/{progress.Total}: {progress.Stage}" +
+                        (string.IsNullOrWhiteSpace(progress.Message) ? "" : $" — {progress.Message}"));
+                }
+                else
+                {
+                    _progressLog.Add(progress.Stage);
+                }
+                StateHasChanged();
+            }
         }
         catch (Exception ex)
         {
@@ -65,26 +457,17 @@
         }
         finally
         {
-            _busy = false;
+            _running = false;
         }
     }
 
-    private sealed class GenerateForm
+    private Task ResetAsync()
     {
-        [System.ComponentModel.DataAnnotations.Required]
-        public int Grade { get; set; } = 9;
-        [System.ComponentModel.DataAnnotations.Required]
-        public string Subject { get; set; } = "Matematik";
-        [System.ComponentModel.DataAnnotations.Required]
-        public string Theme { get; set; } = string.Empty;
-        [System.ComponentModel.DataAnnotations.Required]
-        public string LearningOutcomeCode { get; set; } = string.Empty;
-        public string Difficulty { get; set; } = nameof(MaarifPlatform.Domain.Enums.DifficultyLevel.Medium);
-        [System.ComponentModel.DataAnnotations.Required]
-        public string QuestionType { get; set; } = "ÇoktanSeçmeli";
-        [System.ComponentModel.DataAnnotations.Required]
-        public string Context { get; set; } = string.Empty;
-        [System.ComponentModel.DataAnnotations.Required]
-        public string ReasoningType { get; set; } = "AkılYürütme";
+        _finalSummary = null;
+        _progressLog.Clear();
+        return Task.CompletedTask;
     }
+
+    private static string Truncate(string text, int maxLength) =>
+        text.Length <= maxLength ? text : text[..maxLength] + "...";
 }
