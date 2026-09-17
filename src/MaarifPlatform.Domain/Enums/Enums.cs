@@ -89,5 +89,18 @@ public enum PipelineStage
     Transformation,
     DistractorGeneration,
     Judge,
-    Generation
+    Generation,
+    CurriculumExtraction,
+    CurriculumValidation
+}
+
+/// <summary>Curriculum yapı elemanlarının (Theme/LearningOutcome/ContentFramework/
+/// ProcessComponent/FieldSkill) insan onay durumu — yalnızca Approved kayıtlar cascading
+/// dropdown'larda görünür ve üretimde kullanılabilir (LLM'in curriculum uydurmasını
+/// engellemenin ikinci katmanı, birincisi extraction'ın gerçek doküman metnine bağlı olması).</summary>
+public enum ApprovalStatus
+{
+    Draft,
+    Approved,
+    Rejected
 }

@@ -13,7 +13,9 @@ public class LearningOutcomeConfiguration : IEntityTypeConfiguration<LearningOut
         b.Property(e => e.Code).HasMaxLength(50).IsRequired();
         b.Property(e => e.Subject).HasMaxLength(100).IsRequired();
         b.Property(e => e.Description).IsRequired();
+        b.Property(e => e.ApprovalStatus).HasConversion<string>().HasMaxLength(20);
         b.HasIndex(e => new { e.Code, e.MaarifStandardVersionId }).IsUnique();
+        b.HasIndex(e => new { e.ThemeId, e.ApprovalStatus });
 
         b.HasOne(e => e.SourceDocument)
             .WithMany()
@@ -23,6 +25,11 @@ public class LearningOutcomeConfiguration : IEntityTypeConfiguration<LearningOut
         b.HasOne(e => e.MaarifStandardVersion)
             .WithMany()
             .HasForeignKey(e => e.MaarifStandardVersionId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        b.HasOne(e => e.Theme)
+            .WithMany(t => t.LearningOutcomes)
+            .HasForeignKey(e => e.ThemeId)
             .OnDelete(DeleteBehavior.Restrict);
     }
 }

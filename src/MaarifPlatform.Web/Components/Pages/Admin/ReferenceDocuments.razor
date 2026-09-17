@@ -3,6 +3,7 @@
 @attribute [Authorize(Roles = "Admin")]
 @using System.Security.Cryptography
 @using MaarifPlatform.Application.Storage
+@using MaarifPlatform.Infrastructure.Curriculum
 @using MaarifPlatform.Infrastructure.Persistence
 @using MaarifPlatform.Infrastructure.Rag
 @using Microsoft.AspNetCore.Components.Forms
@@ -20,6 +21,10 @@
 @if (_error is not null)
 {
     <p class="error">@_error</p>
+}
+@if (_extractionInfo is not null)
+{
+    <p class="ok">@_extractionInfo <a href="admin/curriculum-review">Müfredat Onayı'nda incele →</a></p>
 }
 
 <div class="card">
@@ -59,6 +64,12 @@ else
                         {
                             <button @onclick="() => IngestAsync(d.Id)">Ingest Et</button>
                         }
+                        else if (d.Grade is not null)
+                        {
+                            <button disabled="@(_extractingId == d.Id)" @onclick="() => ExtractCurriculumAsync(d.Id)">
+                                @(_extractingId == d.Id ? "Çıkarılıyor..." : "Müfredat Yapısını Çıkar")
+                            </button>
+                        }
                     </td>
                 </tr>
             }
@@ -71,6 +82,8 @@ else
     private IBrowserFile? _selectedFile;
     private bool _uploading;
     private string? _error;
+    private string? _extractionInfo;
+    private Guid? _extractingId;
     private List<DocumentRow>? _documents;
 
     protected override async Task OnInitializedAsync() => await LoadAsync();
@@ -167,6 +180,34 @@ else
         catch (Exception ex)
         {
             _error = ex.Message;
+        }
+
+        await LoadAsync();
+    }
+
+    private async Task ExtractCurriculumAsync(Guid documentId)
+    {
+        _error = null;
+        _extractionInfo = null;
+        _extractingId = documentId;
+
+        await using var scope = ScopeFactory.CreateAsyncScope();
+        var extractionService = scope.ServiceProvider.GetRequiredService<CurriculumExtractionService>();
+
+        try
+        {
+            var result = await extractionService.ExtractAsync(documentId);
+            _extractionInfo = $"Çıkarıldı (henüz Draft, onay bekliyor): {result.ThemesCreated} tema, " +
+                $"{result.LearningOutcomesCreated} kazanım, {result.ContentFrameworksCreated} içerik çerçevesi, " +
+                $"{result.ProcessComponentsCreated} süreç bileşeni, {result.FieldSkillsCreated} alan becerisi.";
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _extractingId = null;
         }
 
         await LoadAsync();

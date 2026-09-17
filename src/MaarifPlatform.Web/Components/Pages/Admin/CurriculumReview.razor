@@ -1,0 +1,284 @@
+@page "/admin/curriculum-review"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = "Admin")]
+@using MaarifPlatform.Domain.Entities
+@using MaarifPlatform.Domain.Enums
+@using MaarifPlatform.Infrastructure.Persistence
+@using Microsoft.EntityFrameworkCore
+@inject IServiceScopeFactory ScopeFactory
+
+<PageTitle>Müfredat Onayı</PageTitle>
+<h1 class="page-title">Müfredat Onayı</h1>
+<p class="page-intro">
+    CurriculumExtractionService'in referans dokümanlardan çıkardığı tema/kazanım/içerik
+    çerçevesi/süreç bileşeni/alan becerisi adayları burada listelenir. Yalnızca
+    <strong>Onaylandı</strong> işaretlenen kayıtlar Soru Üret ekranındaki cascading
+    dropdown'larda görünür ve üretimde kullanılabilir — hiçbir aday admin onayı olmadan
+    kullanılamaz.
+</p>
+
+@if (_error is not null)
+{
+    <p class="error">@_error</p>
+}
+
+<h2>Onay Bekleyen Temalar</h2>
+@if (_themes is null)
+{
+    <p>Yükleniyor...</p>
+}
+else if (_themes.Count == 0)
+{
+    <p>Onay bekleyen tema yok.</p>
+}
+else
+{
+    @foreach (var theme in _themes)
+    {
+        <div class="card">
+            <div class="curriculum-row">
+                <div>
+                    <strong>@theme.Name</strong>
+                    <span class="muted">— @theme.Grade. Sınıf, @theme.Subject@(theme.SourcePage is not null ? $" (kaynak s.{theme.SourcePage})" : "")</span>
+                </div>
+                <div class="actions">
+                    <button class="secondary" @onclick="() => ApproveThemeTreeAsync(theme.Id)">Temayı ve Altını Tümünü Onayla</button>
+                    <button @onclick="() => SetStatusAsync(nameof(Theme), theme.Id, ApprovalStatus.Approved)">Onayla</button>
+                    <button class="danger" @onclick="() => SetStatusAsync(nameof(Theme), theme.Id, ApprovalStatus.Rejected)">Reddet</button>
+                </div>
+            </div>
+
+            @foreach (var outcome in theme.LearningOutcomes)
+            {
+                <div class="curriculum-row curriculum-nested">
+                    <div>
+                        <strong>@outcome.Code</strong> — @outcome.Description
+                    </div>
+                    <div class="actions">
+                        <button @onclick="() => SetStatusAsync(nameof(LearningOutcome), outcome.Id, ApprovalStatus.Approved)">Onayla</button>
+                        <button class="danger" @onclick="() => SetStatusAsync(nameof(LearningOutcome), outcome.Id, ApprovalStatus.Rejected)">Reddet</button>
+                    </div>
+                </div>
+
+                @if (outcome.ContentFrameworks.Count > 0)
+                {
+                    <ul class="curriculum-subitems">
+                        @foreach (var cf in outcome.ContentFrameworks)
+                        {
+                            <li>
+                                İçerik Çerçevesi: @cf.Name
+                                <button @onclick="() => SetStatusAsync(nameof(ContentFramework), cf.Id, ApprovalStatus.Approved)">Onayla</button>
+                                <button class="danger" @onclick="() => SetStatusAsync(nameof(ContentFramework), cf.Id, ApprovalStatus.Rejected)">Reddet</button>
+                            </li>
+                        }
+                    </ul>
+                }
+
+                @if (outcome.ProcessComponents.Count > 0)
+                {
+                    <ul class="curriculum-subitems">
+                        @foreach (var pc in outcome.ProcessComponents)
+                        {
+                            <li>
+                                Süreç Bileşeni: @pc.Description
+                                <button @onclick="() => SetStatusAsync(nameof(ProcessComponent), pc.Id, ApprovalStatus.Approved)">Onayla</button>
+                                <button class="danger" @onclick="() => SetStatusAsync(nameof(ProcessComponent), pc.Id, ApprovalStatus.Rejected)">Reddet</button>
+                            </li>
+                        }
+                    </ul>
+                }
+            }
+        </div>
+    }
+}
+
+<h2>Onay Bekleyen Alan Becerileri</h2>
+@if (_fieldSkills is null)
+{
+    <p>Yükleniyor...</p>
+}
+else if (_fieldSkills.Count == 0)
+{
+    <p>Onay bekleyen alan becerisi yok.</p>
+}
+else
+{
+    <table>
+        <thead><tr><th>Ders</th><th>Kod</th><th>Ad</th><th></th></tr></thead>
+        <tbody>
+            @foreach (var skill in _fieldSkills)
+            {
+                <tr>
+                    <td>@skill.Subject</td>
+                    <td>@skill.Code</td>
+                    <td>@skill.Name</td>
+                    <td class="actions">
+                        <button @onclick="() => SetStatusAsync(nameof(FieldSkill), skill.Id, ApprovalStatus.Approved)">Onayla</button>
+                        <button class="danger" @onclick="() => SetStatusAsync(nameof(FieldSkill), skill.Id, ApprovalStatus.Rejected)">Reddet</button>
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+<style>
+    .curriculum-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 1rem;
+        padding: 0.4rem 0;
+    }
+
+    .curriculum-nested {
+        padding-left: 1rem;
+        border-top: 1px solid var(--z-border, #eee);
+    }
+
+    .curriculum-subitems {
+        margin: 0 0 0.5rem 2rem;
+        padding: 0;
+        list-style: none;
+        font-size: 0.9rem;
+        color: var(--z-muted, #555);
+    }
+
+        .curriculum-subitems li {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.15rem 0;
+        }
+
+    .muted {
+        color: var(--z-muted, #777);
+        font-size: 0.85rem;
+    }
+</style>
+
+@code {
+    private string? _error;
+    private List<ThemeRow>? _themes;
+    private List<FieldSkill>? _fieldSkills;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        await using var scope = ScopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<MaarifDbContext>();
+
+        var themes = await db.Themes
+            .Where(t => t.ApprovalStatus == ApprovalStatus.Draft)
+            .OrderBy(t => t.Grade).ThenBy(t => t.Subject).ThenBy(t => t.Name)
+            .ToListAsync();
+
+        _themes = new List<ThemeRow>();
+        foreach (var theme in themes)
+        {
+            var outcomes = await db.LearningOutcomes
+                .Where(lo => lo.ThemeId == theme.Id && lo.ApprovalStatus == ApprovalStatus.Draft)
+                .Include(lo => lo.ContentFrameworks.Where(cf => cf.ApprovalStatus == ApprovalStatus.Draft))
+                .Include(lo => lo.ProcessComponents.Where(pc => pc.ApprovalStatus == ApprovalStatus.Draft))
+                .OrderBy(lo => lo.Code)
+                .ToListAsync();
+
+            _themes.Add(new ThemeRow(theme.Id, theme.Name, theme.Grade, theme.Subject, theme.SourcePage, outcomes));
+        }
+
+        _fieldSkills = await db.FieldSkills
+            .Where(f => f.ApprovalStatus == ApprovalStatus.Draft)
+            .OrderBy(f => f.Subject).ThenBy(f => f.Code)
+            .ToListAsync();
+    }
+
+    private async Task SetStatusAsync(string entityName, Guid id, ApprovalStatus status)
+    {
+        _error = null;
+        await using var scope = ScopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<MaarifDbContext>();
+
+        try
+        {
+            switch (entityName)
+            {
+                case nameof(Theme):
+                    (await db.Themes.FirstAsync(t => t.Id == id)).ApprovalStatus = status;
+                    break;
+                case nameof(LearningOutcome):
+                    (await db.LearningOutcomes.FirstAsync(lo => lo.Id == id)).ApprovalStatus = status;
+                    break;
+                case nameof(ContentFramework):
+                    (await db.ContentFrameworks.FirstAsync(cf => cf.Id == id)).ApprovalStatus = status;
+                    break;
+                case nameof(ProcessComponent):
+                    (await db.ProcessComponents.FirstAsync(pc => pc.Id == id)).ApprovalStatus = status;
+                    break;
+                case nameof(FieldSkill):
+                    (await db.FieldSkills.FirstAsync(f => f.Id == id)).ApprovalStatus = status;
+                    break;
+            }
+
+            await db.SaveChangesAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+
+        await LoadAsync();
+    }
+
+    /// <summary>Bir dokümandan gelen bütün bir temayı (+ altındaki tüm Draft kazanım/içerik
+    /// çerçevesi/süreç bileşenini) tek seferde onaylar — admin'in tek tek tıklamasını gerektiren
+    /// büyük bir çıkarımı hızlıca gözden geçirip toptan kabul edebilmesi için.</summary>
+    private async Task ApproveThemeTreeAsync(Guid themeId)
+    {
+        _error = null;
+        await using var scope = ScopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<MaarifDbContext>();
+
+        try
+        {
+            var theme = await db.Themes.FirstAsync(t => t.Id == themeId);
+            theme.ApprovalStatus = ApprovalStatus.Approved;
+
+            var outcomes = await db.LearningOutcomes
+                .Where(lo => lo.ThemeId == themeId && lo.ApprovalStatus == ApprovalStatus.Draft)
+                .ToListAsync();
+            foreach (var outcome in outcomes)
+            {
+                outcome.ApprovalStatus = ApprovalStatus.Approved;
+            }
+
+            var outcomeIds = outcomes.Select(o => o.Id).ToList();
+
+            var frameworks = await db.ContentFrameworks
+                .Where(cf => outcomeIds.Contains(cf.LearningOutcomeId) && cf.ApprovalStatus == ApprovalStatus.Draft)
+                .ToListAsync();
+            foreach (var cf in frameworks)
+            {
+                cf.ApprovalStatus = ApprovalStatus.Approved;
+            }
+
+            var components = await db.ProcessComponents
+                .Where(pc => outcomeIds.Contains(pc.LearningOutcomeId) && pc.ApprovalStatus == ApprovalStatus.Draft)
+                .ToListAsync();
+            foreach (var pc in components)
+            {
+                pc.ApprovalStatus = ApprovalStatus.Approved;
+            }
+
+            await db.SaveChangesAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+
+        await LoadAsync();
+    }
+
+    private sealed record ThemeRow(Guid Id, string Name, int Grade, string Subject, int? SourcePage, List<LearningOutcome> LearningOutcomes);
+}

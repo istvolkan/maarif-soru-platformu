@@ -141,6 +141,40 @@ public class LocalHeuristicLLMProvider : ILLMProvider
         return Task.FromResult(result);
     }
 
+    public Task<ExtractCurriculumResult> ExtractCurriculumStructureAsync(ExtractCurriculumRequest request, CancellationToken ct = default)
+    {
+        // Gerçek curriculum uydurma YASAK olduğu için (bkz. Anthropic implementasyonundaki kural),
+        // mock burada da gerçek bir tema/kazanım İCAT ETMEZ — yalnızca ingestion→Draft→review
+        // borusunun mekaniğini (kayıt/onay ekranı) anahtar gerektirmeden test edebilmek için tek
+        // bir AÇIKÇA sahte aday döner; [MOCK] etiketi hiçbir reviewer'ın bunu gerçek sanıp
+        // onaylamamasını garantiler.
+        var themes = request.DocumentChunks.Count == 0
+            ? []
+            : new List<CurriculumThemeCandidate>
+            {
+                new(
+                    Name: $"[MOCK] {request.Subject} — gerçek çıkarım yapılmadı",
+                    LearningOutcomes:
+                    [
+                        new CurriculumLearningOutcomeCandidate(
+                            Code: "[MOCK-KOD]",
+                            Description: "[MOCK] Gerçek kazanım çıkarımı için Ai:Provider=Anthropic kullanın.",
+                            ContentFrameworks: [],
+                            ProcessComponents: [],
+                            SourcePage: request.DocumentChunks[0].Page)
+                    ],
+                    SourcePage: request.DocumentChunks[0].Page)
+            };
+
+        var result = new ExtractCurriculumResult(
+            themes, [], new AiUsage("local-heuristic", "mock-v1", EstimateTokens(request), 40, 0m, 5));
+
+        return Task.FromResult(result);
+    }
+
+    private static int EstimateTokens(ExtractCurriculumRequest request) =>
+        request.DocumentChunks.Sum(c => c.ChunkText.Length) / 4;
+
     private static int EstimateTokens(RecommendRevisionRequest request) =>
         (request.OriginalQuestion.Length + request.Issues.Sum(i => i.Length)) / 4;
 

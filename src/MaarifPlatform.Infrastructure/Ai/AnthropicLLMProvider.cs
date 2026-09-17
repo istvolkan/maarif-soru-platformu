@@ -22,6 +22,7 @@ public class AnthropicLLMProvider : ILLMProvider
     private const string EvaluateToolName = "submit_evaluation";
     private const string GenerateToolName = "submit_generation";
     private const string RecommendRevisionToolName = "submit_revision_recommendation";
+    private const string ExtractCurriculumToolName = "submit_curriculum_structure";
 
     private readonly IOptionsMonitor<AnthropicOptions> _optionsMonitor;
     private AnthropicClient? _client;
@@ -201,6 +202,175 @@ public class AnthropicLLMProvider : ILLMProvider
         var usage = BuildUsage(response, stopwatch, options);
         var suggestion = toolUse.Input.TryGetValue("revision_suggestion", out var s) ? s.GetString() ?? "" : "";
         return new RecommendRevisionResult(suggestion, usage);
+    }
+
+    public async Task<ExtractCurriculumResult> ExtractCurriculumStructureAsync(ExtractCurriculumRequest request, CancellationToken ct = default)
+    {
+        var (options, client) = Current();
+        var parameters = new MessageCreateParams
+        {
+            Model = options.Model,
+            MaxTokens = options.MaxTokens,
+            System = BuildExtractCurriculumSystemPrompt(request),
+            Tools = [BuildExtractCurriculumTool()],
+            ToolChoice = new ToolChoiceTool { Name = ExtractCurriculumToolName },
+            Messages = [new() { Role = Role.User, Content = $"Sınıf {request.Grade}, {request.Subject} için yukarıdaki dokümandan müfredat yapısını çıkar." }],
+        };
+
+        var stopwatch = Stopwatch.StartNew();
+        var response = await client.Messages.Create(parameters, ct);
+        stopwatch.Stop();
+
+        var toolUse = response.Content
+            .Select(b => b.Value)
+            .OfType<ToolUseBlock>()
+            .FirstOrDefault(b => b.Name == ExtractCurriculumToolName)
+            ?? throw new InvalidOperationException("Anthropic yanıtında beklenen submit_curriculum_structure tool_use bloğu bulunamadı.");
+
+        var usage = BuildUsage(response, stopwatch, options);
+        return ParseExtractCurriculumResult(toolUse.Input, usage);
+    }
+
+    private static Tool BuildExtractCurriculumTool()
+    {
+        var learningOutcomeSchema = new
+        {
+            type = "object",
+            properties = new
+            {
+                code = new { type = "string", description = "Dokümanda yazılı resmi kazanım kodu (örn. MAT.9.2.1). Kodu uydurma; dokümanda kod yoksa bu kazanımı hiç döndürme." },
+                description = new { type = "string", description = "Kazanımın dokümandaki tam/özet açıklaması." },
+                content_frameworks = new { type = "array", items = new { type = "string" }, description = "Bu kazanıma bağlı konu/içerik çerçevesi başlıkları (dokümanda geçtiği şekliyle)." },
+                process_components = new { type = "array", items = new { type = "string" }, description = "Bu kazanımın ölçtüğü süreç bileşenleri (dokümanda geçtiği şekliyle)." },
+                source_page = new { type = "integer", description = "Bu kazanımın bulunduğu [KAYNAK n] bloğunun sayfa numarası; emin değilsen döndürme." }
+            },
+            required = new[] { "code", "description" }
+        };
+
+        var themeSchema = new
+        {
+            type = "array",
+            description = "Dokümanda gerçekten geçen temalar. Kaynakta olmayan bir tema ASLA uydurma.",
+            items = new
+            {
+                type = "object",
+                properties = new
+                {
+                    name = new { type = "string" },
+                    source_page = new { type = "integer", description = "Emin değilsen döndürme." },
+                    learning_outcomes = new { type = "array", items = learningOutcomeSchema }
+                },
+                required = new[] { "name", "learning_outcomes" }
+            }
+        };
+
+        var fieldSkillSchema = new
+        {
+            type = "array",
+            description = "Ders geneline ait alan becerileri (örn. Matematik için MAB1-MAB5). Dokümanda yoksa boş dizi döndür.",
+            items = new
+            {
+                type = "object",
+                properties = new
+                {
+                    code = new { type = "string" },
+                    name = new { type = "string" },
+                    source_page = new { type = "integer" }
+                },
+                required = new[] { "code", "name" }
+            }
+        };
+
+        return new Tool
+        {
+            Name = ExtractCurriculumToolName,
+            Description = "Sağlanan doküman parçalarından (yalnızca dokümanda YAZILI olan) müfredat " +
+                "yapısını bildir. Hiçbir tema/kazanım/beceri uydurma — dokümanda bulamadığını boş bırak.",
+            InputSchema = new()
+            {
+                Properties = new Dictionary<string, JsonElement>
+                {
+                    ["themes"] = JsonSerializer.SerializeToElement(themeSchema),
+                    ["field_skills"] = JsonSerializer.SerializeToElement(fieldSkillSchema)
+                },
+                Required = ["themes", "field_skills"]
+            }
+        };
+    }
+
+    private static string BuildExtractCurriculumSystemPrompt(ExtractCurriculumRequest request)
+    {
+        var grounding = request.DocumentChunks.Count == 0
+            ? "(Doküman parçası verilmedi — themes ve field_skills için boş dizi döndür.)"
+            : BuildGroundingBlock(request.DocumentChunks);
+
+        return $"""
+            Sen resmi Türkiye Yüzyılı Maarif Modeli öğretim programı dokümanlarından yapılandırılmış
+            müfredat verisi çıkaran bir uzmansın. Sınıf {request.Grade}, Ders: {request.Subject}.
+
+            KRİTİK KURAL:
+            Bu bir İÇERİK ÜRETİMİ görevi DEĞİL, bir ÇIKARIM (extraction) görevidir. Yalnızca aşağıdaki
+            [KAYNAK n] bloklarında GERÇEKTEN YAZILI olan tema/kazanım kodu/içerik çerçevesi/süreç
+            bileşeni/alan becerisini yapılandır. Kaynakta olmayan hiçbir şeyi ASLA uydurma — emin
+            değilsen o alanı boş bırak veya o kazanımı/temayı hiç döndürme. Bu doküman verilen
+            Sınıf/Ders'e ait değilse veya ilgili içerik bulunamıyorsa themes/field_skills için boş
+            dizi döndür (uydurmaktan iyidir).
+
+            {grounding}
+
+            Cevabını YALNIZCA submit_curriculum_structure aracını çağırarak ver.
+            """;
+    }
+
+    private static ExtractCurriculumResult ParseExtractCurriculumResult(IReadOnlyDictionary<string, JsonElement> input, AiUsage usage)
+    {
+        static int? GetOptionalInt(JsonElement item, string key) =>
+            item.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.Number ? v.GetInt32() : null;
+
+        static List<string> GetStringArray(JsonElement item, string key) =>
+            item.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.Array
+                ? v.EnumerateArray().Select(e => e.GetString() ?? "").ToList()
+                : [];
+
+        var themes = new List<CurriculumThemeCandidate>();
+        if (input.TryGetValue("themes", out var themesEl) && themesEl.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var themeItem in themesEl.EnumerateArray())
+            {
+                var outcomes = new List<CurriculumLearningOutcomeCandidate>();
+                if (themeItem.TryGetProperty("learning_outcomes", out var outcomesEl) && outcomesEl.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var outcomeItem in outcomesEl.EnumerateArray())
+                    {
+                        outcomes.Add(new CurriculumLearningOutcomeCandidate(
+                            Code: outcomeItem.TryGetProperty("code", out var c) ? c.GetString() ?? "" : "",
+                            Description: outcomeItem.TryGetProperty("description", out var d) ? d.GetString() ?? "" : "",
+                            ContentFrameworks: GetStringArray(outcomeItem, "content_frameworks"),
+                            ProcessComponents: GetStringArray(outcomeItem, "process_components"),
+                            SourcePage: GetOptionalInt(outcomeItem, "source_page")));
+                    }
+                }
+
+                themes.Add(new CurriculumThemeCandidate(
+                    Name: themeItem.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "",
+                    LearningOutcomes: outcomes,
+                    SourcePage: GetOptionalInt(themeItem, "source_page")));
+            }
+        }
+
+        var fieldSkills = new List<CurriculumFieldSkillCandidate>();
+        if (input.TryGetValue("field_skills", out var skillsEl) && skillsEl.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var skillItem in skillsEl.EnumerateArray())
+            {
+                fieldSkills.Add(new CurriculumFieldSkillCandidate(
+                    Code: skillItem.TryGetProperty("code", out var c) ? c.GetString() ?? "" : "",
+                    Name: skillItem.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "",
+                    SourcePage: GetOptionalInt(skillItem, "source_page")));
+            }
+        }
+
+        return new ExtractCurriculumResult(themes, fieldSkills, usage);
     }
 
     private static Tool BuildRecommendRevisionTool() => new()

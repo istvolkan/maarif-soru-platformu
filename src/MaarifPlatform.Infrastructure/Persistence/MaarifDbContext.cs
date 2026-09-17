@@ -23,6 +23,11 @@ public class MaarifDbContext(DbContextOptions<MaarifDbContext> options) : DbCont
     public DbSet<AlignmentScore> AlignmentScores => Set<AlignmentScore>();
     public DbSet<Distractor> Distractors => Set<Distractor>();
 
+    public DbSet<Theme> Themes => Set<Theme>();
+    public DbSet<ContentFramework> ContentFrameworks => Set<ContentFramework>();
+    public DbSet<ProcessComponent> ProcessComponents => Set<ProcessComponent>();
+    public DbSet<FieldSkill> FieldSkills => Set<FieldSkill>();
+
     public DbSet<ReviewQueueItem> ReviewQueue => Set<ReviewQueueItem>();
 
     public DbSet<AiRun> AiRuns => Set<AiRun>();

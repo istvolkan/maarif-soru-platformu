@@ -9,6 +9,7 @@ using MaarifPlatform.Infrastructure.Ai;
 using MaarifPlatform.Infrastructure.Analysis;
 using MaarifPlatform.Infrastructure.Auth;
 using MaarifPlatform.Infrastructure.Configuration;
+using MaarifPlatform.Infrastructure.Curriculum;
 using MaarifPlatform.Infrastructure.Export;
 using MaarifPlatform.Infrastructure.Extraction;
 using MaarifPlatform.Infrastructure.Persistence;
@@ -69,6 +70,7 @@ public static class DependencyInjection
 
         services.AddScoped<ReferenceIngestionService>();
         services.AddScoped<ReferenceSearchService>();
+        services.AddScoped<CurriculumExtractionService>();
 
         // §4/§H/§8/§10 Analysis + Judge Provider Disagreement. Birincil/ikincil sağlayıcı seçimi
         // Sprint 11'den itibaren TAMAMEN çalışma-zamanlı (IOptionsMonitor + ILLMProviderFactory) —

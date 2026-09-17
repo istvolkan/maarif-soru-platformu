@@ -98,3 +98,31 @@ public sealed record RecommendRevisionRequest(
     IReadOnlyList<GroundingReference> Grounding);
 
 public sealed record RecommendRevisionResult(string RevisionSuggestion, AiUsage Usage);
+
+// Curriculum yapı çıkarımı (§2C-E/§9/§H) — LLM burada dokümanda YAZILI olanı yapılandırıyor,
+// "invention" değil: girdi yalnızca gerçek ReferenceDocument chunk'ları (Grounding), kaynakta
+// bulunmayan hiçbir tema/kazanım/beceri döndürülemez. Sonuç doğrudan kullanılmaz — Draft olarak
+// kaydedilir, yalnızca admin onayından geçince (bkz. ApprovalStatus) dropdown'larda görünür.
+public sealed record ExtractCurriculumRequest(
+    int Grade,
+    string Subject,
+    IReadOnlyList<GroundingReference> DocumentChunks);
+
+public sealed record CurriculumLearningOutcomeCandidate(
+    string Code,
+    string Description,
+    IReadOnlyList<string> ContentFrameworks,
+    IReadOnlyList<string> ProcessComponents,
+    int? SourcePage);
+
+public sealed record CurriculumThemeCandidate(
+    string Name,
+    IReadOnlyList<CurriculumLearningOutcomeCandidate> LearningOutcomes,
+    int? SourcePage);
+
+public sealed record CurriculumFieldSkillCandidate(string Code, string Name, int? SourcePage);
+
+public sealed record ExtractCurriculumResult(
+    IReadOnlyList<CurriculumThemeCandidate> Themes,
+    IReadOnlyList<CurriculumFieldSkillCandidate> FieldSkills,
+    AiUsage Usage);
