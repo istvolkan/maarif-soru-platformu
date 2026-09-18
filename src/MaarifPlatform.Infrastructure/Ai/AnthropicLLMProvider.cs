@@ -300,7 +300,7 @@ public class AnthropicLLMProvider : ILLMProvider
         };
     }
 
-    private static string BuildExtractCurriculumSystemPrompt(ExtractCurriculumRequest request)
+    internal static string BuildExtractCurriculumSystemPrompt(ExtractCurriculumRequest request)
     {
         var grounding = request.DocumentChunks.Count == 0
             ? "(Doküman parçası verilmedi — themes ve field_skills için boş dizi döndür.)"
@@ -324,7 +324,7 @@ public class AnthropicLLMProvider : ILLMProvider
             """;
     }
 
-    private static ExtractCurriculumResult ParseExtractCurriculumResult(IReadOnlyDictionary<string, JsonElement> input, AiUsage usage)
+    internal static ExtractCurriculumResult ParseExtractCurriculumResult(IReadOnlyDictionary<string, JsonElement> input, AiUsage usage)
     {
         static int? GetOptionalInt(JsonElement item, string key) =>
             item.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.Number ? v.GetInt32() : null;
@@ -440,7 +440,7 @@ public class AnthropicLLMProvider : ILLMProvider
         }
     };
 
-    private static string BuildValidateCurriculumAlignmentSystemPrompt(ValidateCurriculumAlignmentRequest request)
+    internal static string BuildValidateCurriculumAlignmentSystemPrompt(ValidateCurriculumAlignmentRequest request)
     {
         var componentsList = request.ProcessComponents.Count == 0
             ? "(bu kazanım için kayıtlı süreç bileşeni yok — yalnızca kazanım açıklamasına göre değerlendir)"
@@ -567,7 +567,7 @@ public class AnthropicLLMProvider : ILLMProvider
         };
     }
 
-    private static JsonElement Schema(string type, string description) =>
+    internal static JsonElement Schema(string type, string description) =>
         JsonSerializer.SerializeToElement(new { type, description });
 
     private static string BuildSystemPrompt(AnalyzeQuestionRequest request)
@@ -784,7 +784,7 @@ public class AnthropicLLMProvider : ILLMProvider
             """;
     }
 
-    private static JsonElement BuildDistractorsSchema() => JsonSerializer.SerializeToElement(new
+    internal static JsonElement BuildDistractorsSchema() => JsonSerializer.SerializeToElement(new
     {
         type = "array",
         description = "Doğru şık HARİÇ her şık için bir çeldirici kaydı (bkz. §15).",
@@ -839,7 +839,7 @@ public class AnthropicLLMProvider : ILLMProvider
     /// <summary>§6 — LLM burada gerçek bir görsel ÜRETMEZ, yalnızca ne istediğinin yapılandırılmış
     /// TARİFİNİ verir; gerçek SVG'yi VisualSpecRenderer (Application/Visuals) bu tarife bakarak
     /// deterministik olarak üretir. visual_required=false ise bu alan tamamen yok sayılır.</summary>
-    private static JsonElement BuildVisualSpecSchema()
+    internal static JsonElement BuildVisualSpecSchema()
     {
         var pointSchema = new
         {
@@ -949,7 +949,7 @@ public class AnthropicLLMProvider : ILLMProvider
         });
     }
 
-    private static string BuildGenerateSystemPrompt(GenerateQuestionRequest request)
+    internal static string BuildGenerateSystemPrompt(GenerateQuestionRequest request)
     {
         var skillsLine = request.SkillCodes is { Count: > 0 }
             ? $"\n        - Alan becerisi: {string.Join(", ", request.SkillCodes)}"
@@ -1010,12 +1010,12 @@ public class AnthropicLLMProvider : ILLMProvider
         """;
     }
 
-    private static string BuildGenerateUserContent(GenerateQuestionRequest request) => $"""
+    internal static string BuildGenerateUserContent(GenerateQuestionRequest request) => $"""
         BAĞLAM/SENARYO İSTEĞİ:
         {request.Context}
         """;
 
-    private static GenerateQuestionResult ParseGenerateResult(IReadOnlyDictionary<string, JsonElement> input, AiUsage usage)
+    internal static GenerateQuestionResult ParseGenerateResult(IReadOnlyDictionary<string, JsonElement> input, AiUsage usage)
     {
         var options = input.TryGetValue("options", out var optionsEl) && optionsEl.ValueKind == JsonValueKind.Array
             ? optionsEl.EnumerateArray().Select(o => o.GetString() ?? "").ToList()
@@ -1052,7 +1052,7 @@ public class AnthropicLLMProvider : ILLMProvider
             VisualSpec: visualSpec);
     }
 
-    private static VisualSpec ParseVisualSpec(JsonElement el)
+    internal static VisualSpec ParseVisualSpec(JsonElement el)
     {
         static double? GetDouble(JsonElement e, string key) =>
             e.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.Number ? v.GetDouble() : null;
@@ -1135,7 +1135,7 @@ public class AnthropicLLMProvider : ILLMProvider
             GetStringList(el, "headers"), rows);
     }
 
-    private static string BuildGroundingBlock(IReadOnlyList<GroundingReference> grounding) =>
+    internal static string BuildGroundingBlock(IReadOnlyList<GroundingReference> grounding) =>
         grounding.Count == 0
             ? "(RAG'de hiçbir referans bulunamadı. Kaynaksız kazanım/olgu iddiası üretme.)"
             : "RAG BAĞLAMI:\n" + string.Join("\n\n", grounding.Select((g, i) =>
