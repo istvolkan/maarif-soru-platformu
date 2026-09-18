@@ -987,6 +987,7 @@ public class AnthropicLLMProvider : ILLMProvider
         - Sınıf: {request.Grade}, Ders: {request.Subject}
         - Tema: {request.Theme}
         - Kazanım kodu: {request.LearningOutcomeCode}
+        - Kazanım açıklaması (soru MUTLAKA bunu ölçmeli, sadece temayı değil): {request.LearningOutcomeDescription}
         - Zorluk: {request.Difficulty}
         - Soru tipi: {request.QuestionType}
         - Muhakeme tipi: {request.ReasoningType}{skillsLine}{frameworksLine}{visualInstruction}{componentsLine}

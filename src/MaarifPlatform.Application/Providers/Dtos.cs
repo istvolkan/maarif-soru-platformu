@@ -98,7 +98,8 @@ public sealed record GenerateQuestionRequest(
     IReadOnlyList<string>? SkillCodes = null,
     IReadOnlyList<string>? ContentFrameworks = null,
     IReadOnlyList<string>? ProcessComponents = null,
-    string VisualUsage = "None");
+    string VisualUsage = "None",
+    string LearningOutcomeDescription = "");
 
 // §6 Görsel Soru Motoru (Faz 2) — VisualRequired/VisualSpec yalnızca VisualUsage != "None"
 // istendiğinde dolu gelir. VisualSpec LLM'in ürettiği bir TARİFTİR, gerçek görsel değildir —

@@ -72,7 +72,7 @@ public class GenerationOrchestrationService(
         // yeniden başlatma gerektirmeden etkili olur.
         var llmProvider = providerFactory.Get(aiRouting.CurrentValue.Provider);
 
-        var queryText = $"{request.Theme} {request.LearningOutcomeCode} {request.Context}".Trim();
+        var queryText = $"{request.Theme} {request.LearningOutcomeDescription} {request.Context}".Trim();
         var searchResults = await searchService.SearchAsync(
             queryText, topK: 5, grade: request.Grade == 0 ? null : request.Grade,
             subject: string.IsNullOrEmpty(request.Subject) ? null : request.Subject, ct: ct);
@@ -215,7 +215,12 @@ public class GenerationOrchestrationService(
                 yield return new GenerationProgressEvent(slotNo, blueprint.Count,
                     $"Soru {slotNo}/{blueprint.Count} oluşturuluyor (deneme {attempt}/{maxAttempts})…", null, null, null);
 
-                var queryText = $"{request.Theme} {request.LearningOutcomeCode} {request.Context}".Trim();
+                // §RAG: sorgu metni kazanımın gerçek AÇIKLAMASINI içermeli — yalnızca Tema adı +
+                // opaque kod (ör. "MAT.9.4.1") kullanmak, aynı temadaki farklı alt-kazanımları
+                // (ör. "Eşlik ve Benzerlik" teması altındaki hem Öklid bağıntıları hem de
+                // geometrik dönüşümler alt kazanımlarını) semantik olarak ayırt edemiyor ve
+                // yanlış chunk'lar grounding olarak geliyordu (canlı testte gözlemlendi).
+                var queryText = $"{request.Theme} {request.LearningOutcomeDescription} {request.Context}".Trim();
                 var searchResults = await searchService.SearchAsync(
                     queryText, topK: 5, grade: request.Grade, subject: request.Subject, ct: ct);
                 var grounding = searchResults
@@ -227,7 +232,7 @@ public class GenerationOrchestrationService(
                     item.Difficulty.ToString(), item.QuestionType, request.Context, request.ReasoningRequirement,
                     grounding, request.SkillCodes,
                     item.ContentFramework is null ? [] : [item.ContentFramework],
-                    request.ProcessComponents, request.VisualUsage);
+                    request.ProcessComponents, request.VisualUsage, request.LearningOutcomeDescription);
 
                 GenerateQuestionResult generated;
                 try
