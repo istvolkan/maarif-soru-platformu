@@ -330,26 +330,23 @@
     protected override async Task OnInitializedAsync()
     {
         await using var scope = ScopeFactory.CreateAsyncScope();
-        var curriculum = scope.ServiceProvider.GetRequiredService<CurriculumQueryService>();
         var routing = scope.ServiceProvider.GetRequiredService<IOptionsMonitor<GenerationRoutingOptions>>();
 
-        _grades = (await curriculum.GetGradesAsync()).ToList();
+        // Sınıf/Ders listesi gerçek MEB ders çizelgesinden (NationalCurriculumCatalog) gelir —
+        // onaylı müfredat verisi olup olmamasından BAĞIMSIZ, her zaman tüm gerçek dersler
+        // seçilebilir olsun diye. Bir ders için henüz onaylı Tema/Kazanım yoksa aşağıdaki
+        // _curriculumAvailable kontrolü devreye girip yükleme/onay adımına yönlendirir.
+        _grades = NationalCurriculumCatalog.Grades.ToList();
         _maxQuestionCount = routing.CurrentValue.MaxQuestionCount;
     }
 
-    private async Task OnGradeChangedAsync()
+    private Task OnGradeChangedAsync()
     {
         _subject = null; _themeId = null; _learningOutcomeId = null; _selectedLearningOutcome = null;
         _subjects = new(); _themes = new(); _learningOutcomes = new(); _contentFrameworks = new();
 
-        if (_grade is null)
-        {
-            return;
-        }
-
-        await using var scope = ScopeFactory.CreateAsyncScope();
-        var curriculum = scope.ServiceProvider.GetRequiredService<CurriculumQueryService>();
-        _subjects = (await curriculum.GetSubjectsAsync(_grade.Value)).ToList();
+        _subjects = _grade is null ? new() : NationalCurriculumCatalog.GetCoursesForGrade(_grade.Value).ToList();
+        return Task.CompletedTask;
     }
 
     private async Task OnSubjectChangedAsync()

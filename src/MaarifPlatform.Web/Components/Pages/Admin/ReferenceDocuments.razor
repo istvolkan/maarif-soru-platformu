@@ -31,10 +31,50 @@
     <EditForm Model="_form" OnValidSubmit="UploadAsync">
         <DataAnnotationsValidator />
         <div class="field"><label>Başlık</label><InputText @bind-Value="_form.Title" /></div>
-        <div class="field"><label>Doküman Türü</label><InputText @bind-Value="_form.DocumentType" placeholder="örn. Curriculum, Guide" /></div>
-        <div class="field"><label>Sınıf</label><InputNumber @bind-Value="_form.Grade" /></div>
-        <div class="field"><label>Ders</label><InputText @bind-Value="_form.Subject" /></div>
-        <div class="field"><label>Yetkili Kurum</label><InputText @bind-Value="_form.Authority" placeholder="örn. MEB" /></div>
+        <div class="field">
+            <label>Doküman Türü</label>
+            <InputSelect @bind-Value="_form.DocumentType">
+                <option value="">— seçin —</option>
+                @foreach (var dt in NationalCurriculumCatalog.DocumentTypes)
+                {
+                    <option value="@dt.Value">@dt.Label</option>
+                }
+            </InputSelect>
+        </div>
+        <div class="field">
+            <label>Sınıf</label>
+            <InputSelect @bind-Value="_form.Grade" @bind-Value:after="OnFormGradeChangedAsync">
+                <option value="">— seçin —</option>
+                @foreach (var g in NationalCurriculumCatalog.Grades)
+                {
+                    <option value="@g">@g. Sınıf</option>
+                }
+            </InputSelect>
+        </div>
+        <div class="field">
+            <label>Ders</label>
+            <InputSelect @bind-Value="_form.Subject">
+                <option value="">— seçin —</option>
+                @foreach (var s in _formCourses)
+                {
+                    <option value="@s">@s</option>
+                }
+            </InputSelect>
+        </div>
+        <div class="field">
+            <label>Yetkili Kurum</label>
+            <InputSelect @bind-Value="_form.AuthoritySelection">
+                @foreach (var a in NationalCurriculumCatalog.KnownAuthorities)
+                {
+                    <option value="@a">@a</option>
+                }
+                <option value="@NationalCurriculumCatalog.OtherAuthorityValue">Diğer (elle gir)</option>
+            </InputSelect>
+            @if (_form.AuthoritySelection == NationalCurriculumCatalog.OtherAuthorityValue)
+            {
+                <InputText @bind-Value="_form.AuthorityOther" placeholder="Kurum adını yazın" />
+            }
+        </div>
         <div class="field"><label>PDF Dosyası</label><InputFile OnChange="OnFileSelected" accept=".pdf" /></div>
         <button type="submit" disabled="@(_selectedFile is null || _uploading)">@(_uploading ? "Yükleniyor..." : "Yükle")</button>
     </EditForm>
@@ -79,6 +119,7 @@ else
 
 @code {
     private DocumentForm _form = new();
+    private List<string> _formCourses = new();
     private IBrowserFile? _selectedFile;
     private bool _uploading;
     private string? _error;
@@ -87,6 +128,15 @@ else
     private List<DocumentRow>? _documents;
 
     protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private Task OnFormGradeChangedAsync()
+    {
+        _form.Subject = string.Empty;
+        _formCourses = _form.Grade is null
+            ? new()
+            : NationalCurriculumCatalog.GetCoursesForGrade(_form.Grade.Value).ToList();
+        return Task.CompletedTask;
+    }
 
     private async Task LoadAsync()
     {
@@ -135,13 +185,22 @@ else
                 return;
             }
 
+            var authority = _form.AuthoritySelection == NationalCurriculumCatalog.OtherAuthorityValue
+                ? _form.AuthorityOther
+                : _form.AuthoritySelection;
+            if (string.IsNullOrWhiteSpace(authority))
+            {
+                _error = "Yetkili Kurum boş olamaz.";
+                return;
+            }
+
             var document = new ReferenceDocument
             {
                 Title = _form.Title,
                 DocumentType = _form.DocumentType,
                 Grade = _form.Grade,
                 Subject = _form.Subject,
-                Authority = _form.Authority,
+                Authority = authority,
                 DocumentHash = documentHash
             };
 
@@ -154,6 +213,7 @@ else
             await db.SaveChangesAsync();
 
             _form = new();
+            _formCourses = new();
             _selectedFile = null;
             await LoadAsync();
         }
@@ -222,8 +282,8 @@ else
         public int? Grade { get; set; }
         [System.ComponentModel.DataAnnotations.Required]
         public string Subject { get; set; } = string.Empty;
-        [System.ComponentModel.DataAnnotations.Required]
-        public string Authority { get; set; } = string.Empty;
+        public string AuthoritySelection { get; set; } = NationalCurriculumCatalog.KnownAuthorities[0];
+        public string? AuthorityOther { get; set; }
     }
 
     private sealed record DocumentRow(Guid Id, string Title, string DocumentType, int? Grade, string Subject, int ChunkCount);
