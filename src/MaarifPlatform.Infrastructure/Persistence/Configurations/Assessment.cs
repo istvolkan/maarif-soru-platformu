@@ -14,7 +14,13 @@ public class LearningOutcomeConfiguration : IEntityTypeConfiguration<LearningOut
         b.Property(e => e.Subject).HasMaxLength(100).IsRequired();
         b.Property(e => e.Description).IsRequired();
         b.Property(e => e.ApprovalStatus).HasConversion<string>().HasMaxLength(20);
-        b.HasIndex(e => new { e.Code, e.MaarifStandardVersionId }).IsUnique();
+        // Not: yalnızca (Code, MaarifStandardVersionId) yeterli değil — bazı gerçek MEB derslerinde
+        // (ör. Türk Dili ve Edebiyatı: "TDE1.1") kazanım kodu tema/sınıf bazında YENİDEN
+        // BAŞLIYOR, global olarak tekil değil. Grade/Subject eklenmeden aynı kodun farklı bir
+        // sınıfa ait FARKLI bir kazanımı yanlışlıkla "zaten var" sayılıp sessizce atlanıyordu
+        // (canlı TDE çıkarımında keşfedildi — 9. sınıf kodları 10-12. sınıfın gerçek kazanımlarını
+        // "tekrar" sanıp bloke etti).
+        b.HasIndex(e => new { e.Code, e.Subject, e.Grade, e.MaarifStandardVersionId }).IsUnique();
         b.HasIndex(e => new { e.ThemeId, e.ApprovalStatus });
 
         b.HasOne(e => e.SourceDocument)

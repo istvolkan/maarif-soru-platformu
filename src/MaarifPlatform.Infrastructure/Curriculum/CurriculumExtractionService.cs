@@ -67,8 +67,14 @@ public class CurriculumExtractionService(
         // patlardı (gerçek bir MEB dokümanıyla test ederken tam olarak bu yaşandı) — o yüzden
         // mevcut kodlar/isimler baştan önceden yüklenir, "seen" kümesine dahil edilir ama ASLA
         // yeniden Add edilmez (yalnızca atlanır, zaten Approved/Draft olarak duruyorlar).
+        // ÖNEMLİ: bu sorgu Grade+Subject'e göre SINIRLANMALI — bazı derslerde (ör. Türk Dili ve
+        // Edebiyatı: "TDE1.1") kazanım kodu tema/sınıf bazında yeniden başlar, global tekil
+        // değildir. Sınırlamadan sorgulamak, FARKLI bir sınıfın gerçek kazanımını "zaten var"
+        // sanıp sessizce atlar (canlı testte 10-12. sınıf TDE kazanımlarının kaybolmasına yol
+        // açtı) — bkz. LearningOutcomeConfiguration'daki (Code, Subject, Grade, ...) unique index.
         var existingOutcomeCodes = await db.LearningOutcomes
-            .Where(lo => lo.MaarifStandardVersionId == standardVersion.Id)
+            .Where(lo => lo.MaarifStandardVersionId == standardVersion.Id
+                && lo.Grade == document.Grade.Value && lo.Subject == document.Subject)
             .Select(lo => lo.Code)
             .ToListAsync(ct);
         foreach (var code in existingOutcomeCodes)
