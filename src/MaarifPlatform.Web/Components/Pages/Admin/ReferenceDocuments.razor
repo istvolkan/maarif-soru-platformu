@@ -106,8 +106,13 @@ else
                         }
                         else if (d.Grade is not null)
                         {
-                            <button disabled="@(_extractingId == d.Id)" @onclick="() => ExtractCurriculumAsync(d.Id)">
-                                @(_extractingId == d.Id ? "Çıkarılıyor..." : "Müfredat Yapısını Çıkar")
+                            @if (d.ExtractedThemeCount > 0)
+                            {
+                                <span class="extracted-badge">✓ Çıkarıldı (@d.ExtractedThemeCount tema)</span>
+                            }
+                            <button class="@(d.ExtractedThemeCount > 0 ? "secondary" : "")"
+                                    disabled="@(_extractingId == d.Id)" @onclick="() => ExtractCurriculumAsync(d.Id)">
+                                @(_extractingId == d.Id ? "Çıkarılıyor..." : d.ExtractedThemeCount > 0 ? "Tekrar Çıkar" : "Müfredat Yapısını Çıkar")
                             </button>
                         }
                     </td>
@@ -116,6 +121,17 @@ else
         </tbody>
     </table>
 }
+
+<style>
+    .extracted-badge {
+        display: inline-block;
+        color: var(--z-success, #1a7f37);
+        font-size: 0.85rem;
+        font-weight: 600;
+        margin-right: 0.5rem;
+        white-space: nowrap;
+    }
+</style>
 
 @code {
     private DocumentForm _form = new();
@@ -146,7 +162,8 @@ else
         _documents = await db.ReferenceDocuments
             .OrderByDescending(d => d.CreatedAt)
             .Select(d => new DocumentRow(d.Id, d.Title, d.DocumentType, d.Grade, d.Subject,
-                db.ReferenceChunks.Count(c => c.ReferenceDocumentId == d.Id)))
+                db.ReferenceChunks.Count(c => c.ReferenceDocumentId == d.Id),
+                db.Themes.Count(t => t.SourceDocumentId == d.Id)))
             .ToListAsync();
     }
 
@@ -286,5 +303,5 @@ else
         public string? AuthorityOther { get; set; }
     }
 
-    private sealed record DocumentRow(Guid Id, string Title, string DocumentType, int? Grade, string Subject, int ChunkCount);
+    private sealed record DocumentRow(Guid Id, string Title, string DocumentType, int? Grade, string Subject, int ChunkCount, int ExtractedThemeCount);
 }
