@@ -54,6 +54,9 @@ else
                         {
                             <button @onclick="() => ExtractAsync(b.Id)">Soruları Çıkar</button>
                         }
+                        <button class="secondary" disabled="@(_deletingId == b.Id)" @onclick="() => DeleteAsync(b.Id)">
+                            @(_deletingId == b.Id ? "Siliniyor..." : "Sil")
+                        </button>
                     </td>
                 </tr>
             }
@@ -66,6 +69,7 @@ else
     private IBrowserFile? _selectedFile;
     private bool _uploading;
     private string? _error;
+    private Guid? _deletingId;
     private List<BookRow>? _books;
 
     protected override async Task OnInitializedAsync() => await LoadAsync();
@@ -121,6 +125,40 @@ else
         {
             _uploading = false;
         }
+    }
+
+    private async Task DeleteAsync(Guid bookId)
+    {
+        _error = null;
+        _deletingId = bookId;
+        await using var scope = ScopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<MaarifDbContext>();
+
+        try
+        {
+            // Book -> Questions FK'i Restrict'tir (bkz. BookConfiguration) — önce sorular
+            // silinmeli, ardından Book silinebilir (BookPages Book silinince otomatik Cascade olur).
+            var questions = await db.Questions.Where(q => q.BookId == bookId).ToListAsync();
+            db.Questions.RemoveRange(questions);
+            await db.SaveChangesAsync();
+
+            var book = await db.Books.FirstOrDefaultAsync(b => b.Id == bookId);
+            if (book is not null)
+            {
+                db.Books.Remove(book);
+                await db.SaveChangesAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _deletingId = null;
+        }
+
+        await LoadAsync();
     }
 
     private async Task ExtractAsync(Guid bookId)

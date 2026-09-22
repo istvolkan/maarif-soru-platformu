@@ -115,6 +115,9 @@ else
                                 @(_extractingId == d.Id ? "Çıkarılıyor..." : d.ExtractedThemeCount > 0 ? "Tekrar Çıkar" : "Müfredat Yapısını Çıkar")
                             </button>
                         }
+                        <button class="secondary" disabled="@(_deletingId == d.Id)" @onclick="() => DeleteDocumentAsync(d.Id)">
+                            @(_deletingId == d.Id ? "Siliniyor..." : "Sil")
+                        </button>
                     </td>
                 </tr>
             }
@@ -141,6 +144,7 @@ else
     private string? _error;
     private string? _extractionInfo;
     private Guid? _extractingId;
+    private Guid? _deletingId;
     private List<DocumentRow>? _documents;
 
     protected override async Task OnInitializedAsync() => await LoadAsync();
@@ -285,6 +289,61 @@ else
         finally
         {
             _extractingId = null;
+        }
+
+        await LoadAsync();
+    }
+
+    private async Task DeleteDocumentAsync(Guid documentId)
+    {
+        _error = null;
+        _extractionInfo = null;
+        _deletingId = documentId;
+
+        await using var scope = ScopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<MaarifDbContext>();
+
+        try
+        {
+            // Curriculum tablolarının hepsi SourceDocument FK'inde Restrict kullanır (bkz.
+            // Curriculum.cs/Assessment.cs) — kazara zincirleme silme yok, bu yüzden sırayı
+            // elle yönetmemiz gerekiyor: önce yaprak kayıtlar (ContentFramework/ProcessComponent/
+            // FieldSkill), sonra LearningOutcome, en son — yalnızca başka bir dokümandan gelen
+            // kazanımı KALMAMIŞSA — Theme. ReferenceChunks, ReferenceDocument silinince Cascade
+            // ile otomatik gider.
+            await db.ContentFrameworks.Where(cf => cf.SourceDocumentId == documentId).ExecuteDeleteAsync();
+            await db.ProcessComponents.Where(pc => pc.SourceDocumentId == documentId).ExecuteDeleteAsync();
+            await db.FieldSkills.Where(fs => fs.SourceDocumentId == documentId).ExecuteDeleteAsync();
+            await db.LearningOutcomes.Where(lo => lo.SourceDocumentId == documentId).ExecuteDeleteAsync();
+
+            var themeIds = await db.Themes.Where(t => t.SourceDocumentId == documentId).Select(t => t.Id).ToListAsync();
+            foreach (var themeId in themeIds)
+            {
+                var stillHasOutcomes = await db.LearningOutcomes.AnyAsync(lo => lo.ThemeId == themeId);
+                if (!stillHasOutcomes)
+                {
+                    await db.Themes.Where(t => t.Id == themeId).ExecuteDeleteAsync();
+                }
+                else
+                {
+                    // Bu tema başka bir dokümandan gelen kazanımlarla hâlâ kullanılıyor (aynı
+                    // Sınıf/Ders/isim eşleşmesiyle yeniden kullanılmıştı) — temayı SİLMEDEN,
+                    // yalnızca kaynak referansını temizle (artık tek bir belgeye ait değil,
+                    // karma/birleşik kaynaklı), yoksa ReferenceDocument silinemez.
+                    await db.Themes.Where(t => t.Id == themeId)
+                        .ExecuteUpdateAsync(s => s.SetProperty(t => t.SourceDocumentId, (Guid?)null));
+                }
+            }
+
+            await db.ReferenceDocuments.Where(d => d.Id == documentId).ExecuteDeleteAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _deletingId = null;
         }
 
         await LoadAsync();
