@@ -18,6 +18,18 @@ public class AppUserConfiguration : IEntityTypeConfiguration<AppUser>
     }
 }
 
+public class RolePermissionConfiguration : IEntityTypeConfiguration<RolePermission>
+{
+    public void Configure(EntityTypeBuilder<RolePermission> b)
+    {
+        b.ToTable("role_permissions");
+        b.HasKey(e => e.Id);
+        b.Property(e => e.Role).HasConversion<string>().HasMaxLength(30);
+        b.Property(e => e.Permission).HasConversion<string>().HasMaxLength(60);
+        b.HasIndex(e => new { e.Role, e.Permission }).IsUnique();
+    }
+}
+
 public class MaarifStandardVersionConfiguration : IEntityTypeConfiguration<MaarifStandardVersion>
 {
     public void Configure(EntityTypeBuilder<MaarifStandardVersion> b)

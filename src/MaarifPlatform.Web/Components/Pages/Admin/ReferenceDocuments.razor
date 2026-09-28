@@ -1,6 +1,6 @@
 @page "/admin/reference-documents"
 @rendermode InteractiveServer
-@attribute [Authorize(Roles = "Admin")]
+@attribute [Authorize(Policy = "ReferenceDocumentUpload")]
 @using System.Security.Cryptography
 @using MaarifPlatform.Application.Storage
 @using MaarifPlatform.Infrastructure.Curriculum

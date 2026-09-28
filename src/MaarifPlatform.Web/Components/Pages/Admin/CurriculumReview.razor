@@ -1,6 +1,6 @@
 @page "/admin/curriculum-review"
 @rendermode InteractiveServer
-@attribute [Authorize(Roles = "Admin")]
+@attribute [Authorize(Policy = "CurriculumApproval")]
 @using MaarifPlatform.Domain.Entities
 @using MaarifPlatform.Domain.Enums
 @using MaarifPlatform.Infrastructure.Persistence

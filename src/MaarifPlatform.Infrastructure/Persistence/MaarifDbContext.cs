@@ -6,6 +6,7 @@ namespace MaarifPlatform.Infrastructure.Persistence;
 public class MaarifDbContext(DbContextOptions<MaarifDbContext> options) : DbContext(options)
 {
     public DbSet<AppUser> Users => Set<AppUser>();
+    public DbSet<RolePermission> RolePermissions => Set<RolePermission>();
     public DbSet<MaarifStandardVersion> MaarifStandardVersions => Set<MaarifStandardVersion>();
 
     public DbSet<ReferenceDocument> ReferenceDocuments => Set<ReferenceDocument>();

@@ -1,0 +1,163 @@
+@page "/admin/permissions"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = "Admin")]
+@using MaarifPlatform.Domain.Enums
+@using MaarifPlatform.Infrastructure.Auth
+@inject IServiceScopeFactory ScopeFactory
+
+<PageTitle>Yetkiler</PageTitle>
+<h1 class="page-title">Yetkiler</h1>
+<p class="page-intro">
+    Admin rolü her zaman tüm yetkilere sahiptir ve burada listelenmez. Aşağıdaki matriste
+    işaretlediğiniz her hücre, o rolün o sayfaya/işleme erişebileceği anlamına gelir — kayıt
+    hemen etkili olur, kullanıcıların yeniden giriş yapmasına gerek yoktur.
+</p>
+
+@if (_message is not null)
+{
+    <p class="ok">@_message</p>
+}
+@if (_error is not null)
+{
+    <p class="error">@_error</p>
+}
+
+@if (_grants is null)
+{
+    <p>Yükleniyor...</p>
+}
+else
+{
+    <div class="card">
+        <div class="matrix-wrap">
+            <table class="matrix">
+                <thead>
+                    <tr>
+                        <th>Rol</th>
+                        @foreach (var p in _permissions)
+                        {
+                            <th>@PermissionLabel(p)</th>
+                        }
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var role in _roles)
+                    {
+                        <tr>
+                            <td>@RoleLabel(role)</td>
+                            @foreach (var p in _permissions)
+                            {
+                                var key = (role, p);
+                                <td class="center">
+                                    <input type="checkbox" checked="@_grants.Contains(key)"
+                                           @onchange="e => Toggle(role, p, (bool)(e.Value ?? false))" />
+                                </td>
+                            }
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+        <button @onclick="SaveAsync" disabled="@_saving">@(_saving ? "Kaydediliyor..." : "Kaydet")</button>
+    </div>
+}
+
+<style>
+    .matrix-wrap { overflow-x: auto; }
+
+    .matrix {
+        border-collapse: collapse;
+        width: 100%;
+        min-width: 560px;
+        margin-bottom: 1rem;
+    }
+
+    .matrix th, .matrix td {
+        border: 1px solid var(--z-border);
+        padding: 0.5rem 0.7rem;
+        text-align: left;
+    }
+
+    .matrix th { background: var(--z-card); color: var(--z-black); font-size: 0.85rem; text-transform: none; }
+    .matrix td.center { text-align: center; }
+</style>
+
+@code {
+    private static readonly UserRole[] _roles = [UserRole.Editor, UserRole.Teacher, UserRole.Reviewer];
+    private static readonly Permission[] _permissions = Enum.GetValues<Permission>();
+
+    private HashSet<(UserRole Role, Permission Permission)>? _grants;
+    private HashSet<(UserRole Role, Permission Permission)> _pendingChanges = new();
+    private bool _saving;
+    private string? _message;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        await using var scope = ScopeFactory.CreateAsyncScope();
+        var permissions = scope.ServiceProvider.GetRequiredService<PermissionService>();
+        _grants = await permissions.GetGrantedAsync();
+        _pendingChanges.Clear();
+    }
+
+    private void Toggle(UserRole role, Permission permission, bool granted)
+    {
+        var key = (role, permission);
+        if (granted)
+        {
+            _grants!.Add(key);
+        }
+        else
+        {
+            _grants!.Remove(key);
+        }
+
+        _pendingChanges.Add(key);
+    }
+
+    private async Task SaveAsync()
+    {
+        _saving = true;
+        _error = null;
+        _message = null;
+        try
+        {
+            await using var scope = ScopeFactory.CreateAsyncScope();
+            var permissions = scope.ServiceProvider.GetRequiredService<PermissionService>();
+            foreach (var (role, permission) in _pendingChanges)
+            {
+                await permissions.SetAsync(role, permission, _grants!.Contains((role, permission)));
+            }
+
+            _message = "Yetkiler kaydedildi.";
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private static string RoleLabel(UserRole role) => role switch
+    {
+        UserRole.Editor => "Editor",
+        UserRole.Teacher => "Öğretmen",
+        UserRole.Reviewer => "İncelemeci",
+        _ => role.ToString()
+    };
+
+    private static string PermissionLabel(Permission permission) => permission switch
+    {
+        Permission.QuestionPoolAccess => "Soru Havuzuna Erişim",
+        Permission.QuestionGenerationAccess => "Soru Üretmeye Erişim",
+        Permission.ReferenceDocumentUpload => "Referans Doküman Ekleme",
+        Permission.CurriculumApproval => "Müfredat Onayı",
+        _ => permission.ToString()
+    };
+}

@@ -45,7 +45,18 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
         options.ExpireTimeSpan = TimeSpan.FromHours(8);
         options.SlidingExpiration = true;
     });
-builder.Services.AddAuthorization();
+// §18 Rol bazlı yetki matrisi — her Permission için, adı Permission.ToString() ile aynı bir
+// policy tanımlanır; gerçek "bu rol bu yetkiye sahip mi" kontrolü PermissionAuthorizationHandler'da
+// (Infrastructure/Auth) role_permissions tablosuna bakarak yapılır, [Authorize(Roles=...)]'daki
+// gibi derleme zamanında sabitlenmez — Admin/Kullanıcılar > Yetkiler ekranından değiştirilebilir.
+builder.Services.AddAuthorization(options =>
+{
+    foreach (var permission in Enum.GetValues<MaarifPlatform.Domain.Enums.Permission>())
+    {
+        options.AddPolicy(permission.ToString(), policy =>
+            policy.Requirements.Add(new MaarifPlatform.Infrastructure.Auth.PermissionRequirement(permission)));
+    }
+});
 
 var app = builder.Build();
 

@@ -136,6 +136,13 @@ public static class DependencyInjection
         services.AddScoped<IJwtTokenService, JwtTokenService>();
         services.AddScoped<AuthService>();
 
+        // §18 Rol bazlı yetki matrisi — [Authorize(Policy=nameof(Permission.X))] sayfaları için.
+        // Politikaların kendisi (AddAuthorization/AddPolicy) Web'in Program.cs'inde kayıtlıdır
+        // (yalnızca ASP.NET Core host projesinde mevcut olan AuthorizationOptions API'si
+        // gerektirir); burada yalnızca handler + veri erişimi.
+        services.AddScoped<PermissionService>();
+        services.AddScoped<Microsoft.AspNetCore.Authorization.IAuthorizationHandler, PermissionAuthorizationHandler>();
+
         services.AddScoped<SystemSettingsService>();
 
         return services;

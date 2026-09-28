@@ -4,7 +4,9 @@
 @using MaarifPlatform.Infrastructure.Persistence
 @using Microsoft.AspNetCore.Identity
 @using Microsoft.EntityFrameworkCore
+@using System.Security.Claims
 @inject IServiceScopeFactory ScopeFactory
+@inject AuthenticationStateProvider AuthState
 
 <PageTitle>Kullanıcılar</PageTitle>
 <h1 class="page-title">Kullanıcılar</h1>
@@ -12,6 +14,10 @@
 @if (_error is not null)
 {
     <p class="error">@_error</p>
+}
+@if (_message is not null)
+{
+    <p class="ok">@_message</p>
 }
 
 <div class="card">
@@ -40,16 +46,56 @@
 else
 {
     <table>
-        <thead><tr><th>Ad Soyad</th><th>E-posta</th><th>Rol</th><th>Oluşturulma</th></tr></thead>
+        <thead><tr><th>Ad Soyad</th><th>E-posta</th><th>Rol</th><th>Oluşturulma</th><th></th></tr></thead>
         <tbody>
             @foreach (var u in _users)
             {
-                <tr>
-                    <td>@u.Name</td>
-                    <td>@u.Email</td>
-                    <td>@u.Role</td>
-                    <td>@u.CreatedAt.ToString("yyyy-MM-dd")</td>
-                </tr>
+                if (_editingUserId == u.Id)
+                {
+                    <tr>
+                        <td><input @bind="_editForm!.Name" /></td>
+                        <td><input @bind="_editForm!.Email" /></td>
+                        <td>
+                            <select @bind="_editForm!.Role">
+                                @foreach (var role in Enum.GetNames<UserRole>())
+                                {
+                                    <option value="@role">@role</option>
+                                }
+                            </select>
+                        </td>
+                        <td>@u.CreatedAt.ToString("yyyy-MM-dd")</td>
+                        <td class="actions">
+                            <input placeholder="Yeni parola (opsiyonel)" type="password" @bind="_editForm!.NewPassword" />
+                            <button @onclick="SaveEditAsync">Kaydet</button>
+                            <button class="secondary" @onclick="CancelEdit">Vazgeç</button>
+                        </td>
+                    </tr>
+                }
+                else
+                {
+                    <tr>
+                        <td>@u.Name</td>
+                        <td>@u.Email</td>
+                        <td>@u.Role</td>
+                        <td>@u.CreatedAt.ToString("yyyy-MM-dd")</td>
+                        <td class="actions">
+                            <button class="secondary" @onclick="() => StartEdit(u)">Düzenle</button>
+                            @if (u.Id == _currentUserId)
+                            {
+                                <span class="muted">(siz)</span>
+                            }
+                            else if (_confirmDeleteId == u.Id)
+                            {
+                                <button class="danger" @onclick="() => DeleteAsync(u.Id)">Emin misiniz?</button>
+                                <button class="secondary" @onclick="() => _confirmDeleteId = null">Vazgeç</button>
+                            }
+                            else
+                            {
+                                <button class="danger" @onclick="() => _confirmDeleteId = u.Id">Sil</button>
+                            }
+                        </td>
+                    </tr>
+                }
             }
         </tbody>
     </table>
@@ -58,9 +104,20 @@ else
 @code {
     private UserForm _form = new();
     private string? _error;
+    private string? _message;
     private List<AppUser>? _users;
+    private Guid? _currentUserId;
 
-    protected override async Task OnInitializedAsync() => await LoadAsync();
+    private Guid? _editingUserId;
+    private EditUserForm? _editForm;
+    private Guid? _confirmDeleteId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthState.GetAuthenticationStateAsync();
+        _currentUserId = Guid.TryParse(authState.User.FindFirst(ClaimTypes.NameIdentifier)?.Value, out var id) ? id : null;
+        await LoadAsync();
+    }
 
     private async Task LoadAsync()
     {
@@ -72,6 +129,7 @@ else
     private async Task CreateAsync()
     {
         _error = null;
+        _message = null;
         await using var scope = ScopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<MaarifDbContext>();
         var hasher = scope.ServiceProvider.GetRequiredService<IPasswordHasher<AppUser>>();
@@ -99,6 +157,123 @@ else
         await LoadAsync();
     }
 
+    private void StartEdit(AppUser u)
+    {
+        _error = null;
+        _message = null;
+        _confirmDeleteId = null;
+        _editingUserId = u.Id;
+        _editForm = new EditUserForm
+        {
+            Name = u.Name,
+            Email = u.Email,
+            Role = u.Role.ToString()
+        };
+    }
+
+    private void CancelEdit()
+    {
+        _editingUserId = null;
+        _editForm = null;
+    }
+
+    private async Task SaveEditAsync()
+    {
+        if (_editingUserId is null || _editForm is null)
+        {
+            return;
+        }
+
+        _error = null;
+        _message = null;
+
+        if (string.IsNullOrWhiteSpace(_editForm.Name) || string.IsNullOrWhiteSpace(_editForm.Email))
+        {
+            _error = "Ad Soyad ve E-posta boş olamaz.";
+            return;
+        }
+
+        if (!Enum.TryParse<UserRole>(_editForm.Role, ignoreCase: true, out var role))
+        {
+            _error = $"Geçersiz rol: {_editForm.Role}.";
+            return;
+        }
+
+        var userId = _editingUserId.Value;
+
+        // Kendi kendini Admin'den düşürüp kilitlenmeyi önle.
+        if (userId == _currentUserId && role != UserRole.Admin)
+        {
+            _error = "Kendi rolünüzü Admin dışına düşüremezsiniz.";
+            return;
+        }
+
+        await using var scope = ScopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<MaarifDbContext>();
+        var hasher = scope.ServiceProvider.GetRequiredService<IPasswordHasher<AppUser>>();
+
+        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == userId);
+        if (user is null)
+        {
+            _error = "Kullanıcı bulunamadı.";
+            _editingUserId = null;
+            _editForm = null;
+            await LoadAsync();
+            return;
+        }
+
+        var emailTaken = await db.Users.AnyAsync(u => u.Id != userId && u.Email == _editForm.Email);
+        if (emailTaken)
+        {
+            _error = "Bu e-posta adresiyle zaten başka bir kullanıcı var.";
+            return;
+        }
+
+        user.Name = _editForm.Name;
+        user.Email = _editForm.Email;
+        user.Role = role;
+        if (!string.IsNullOrWhiteSpace(_editForm.NewPassword))
+        {
+            user.PasswordHash = hasher.HashPassword(user, _editForm.NewPassword);
+        }
+
+        await db.SaveChangesAsync();
+
+        _message = "Kullanıcı güncellendi.";
+        _editingUserId = null;
+        _editForm = null;
+        await LoadAsync();
+    }
+
+    private async Task DeleteAsync(Guid userId)
+    {
+        _error = null;
+        _message = null;
+        _confirmDeleteId = null;
+
+        if (userId == _currentUserId)
+        {
+            _error = "Kendi hesabınızı silemezsiniz.";
+            return;
+        }
+
+        await using var scope = ScopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<MaarifDbContext>();
+
+        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == userId);
+        if (user is null)
+        {
+            await LoadAsync();
+            return;
+        }
+
+        db.Users.Remove(user);
+        await db.SaveChangesAsync();
+
+        _message = "Kullanıcı silindi.";
+        await LoadAsync();
+    }
+
     private sealed class UserForm
     {
         [System.ComponentModel.DataAnnotations.Required]
@@ -108,5 +283,13 @@ else
         [System.ComponentModel.DataAnnotations.Required]
         public string Password { get; set; } = string.Empty;
         public string Role { get; set; } = nameof(UserRole.Teacher);
+    }
+
+    private sealed class EditUserForm
+    {
+        public string Name { get; set; } = string.Empty;
+        public string Email { get; set; } = string.Empty;
+        public string Role { get; set; } = nameof(UserRole.Teacher);
+        public string? NewPassword { get; set; }
     }
 }

@@ -1,6 +1,6 @@
 @page "/questions/pool"
 @rendermode InteractiveServer
-@attribute [Authorize(Roles = "Admin,Editor")]
+@attribute [Authorize(Policy = "QuestionPoolAccess")]
 @using System.Text.Json
 @using MaarifPlatform.Domain.Enums
 @using MaarifPlatform.Infrastructure.Persistence

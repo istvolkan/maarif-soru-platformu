@@ -1,6 +1,6 @@
 @page "/questions/generate"
 @rendermode InteractiveServer
-@attribute [Authorize(Roles = "Admin,Editor")]
+@attribute [Authorize(Policy = "QuestionGenerationAccess")]
 @using MaarifPlatform.Application.Providers
 @using MaarifPlatform.Domain.Enums
 @using MaarifPlatform.Infrastructure.Ai

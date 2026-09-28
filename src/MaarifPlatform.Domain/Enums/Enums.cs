@@ -8,6 +8,20 @@ public enum UserRole
     Reviewer
 }
 
+/// <summary>Rol bazında verilebilen, sayfa erişimini denetleyen yetki türleri — bkz.
+/// <see cref="Entities.RolePermission"/>. Admin bu listeye HİÇ bakılmadan her zaman tüm
+/// yetkilere sahiptir (kilitlenme riskini önlemek için PermissionAuthorizationHandler'da
+/// sabit kodlanmıştır); burada yalnızca Admin DIŞINDAKİ rollere devredilebilecek yetkiler
+/// tanımlanır. Books/Settings/Users gibi hassas admin sayfaları bu sisteme dahil DEĞİLDİR,
+/// [Authorize(Roles="Admin")] olarak sabit kalır.</summary>
+public enum Permission
+{
+    QuestionPoolAccess,
+    QuestionGenerationAccess,
+    ReferenceDocumentUpload,
+    CurriculumApproval
+}
+
 /// <summary>Question DNA §17 durum makinesi: EXTRACTED → ... → PUBLISHED.</summary>
 public enum QuestionStatus
 {

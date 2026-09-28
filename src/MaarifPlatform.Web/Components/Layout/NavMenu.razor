@@ -8,17 +8,26 @@
         <nav>
             <NavLink href="" Match="NavLinkMatch.All">Ana Sayfa</NavLink>
 
-            <AuthorizeView Roles="Admin,Editor">
+            @* §18: bu linkler artık sabit Roles="..." değil, Admin/Yetkiler ekranından role
+               bazında açılıp kapatılabilen Policy'lere göre görünür/gizlenir. *@
+            <AuthorizeView Policy="QuestionGenerationAccess">
                 <NavLink href="questions/generate">Soru Üret</NavLink>
+            </AuthorizeView>
+            <AuthorizeView Policy="QuestionPoolAccess">
                 <NavLink href="questions/pool">Soru Havuzu</NavLink>
+            </AuthorizeView>
+            <AuthorizeView Policy="ReferenceDocumentUpload">
+                <NavLink href="admin/reference-documents">Referans Dokümanları</NavLink>
+            </AuthorizeView>
+            <AuthorizeView Policy="CurriculumApproval">
+                <NavLink href="admin/curriculum-review">Müfredat Onayı</NavLink>
             </AuthorizeView>
 
             <AuthorizeView Roles="Admin">
                 <span class="nav-sep"></span>
                 <NavLink href="admin/books">Kitaplar</NavLink>
-                <NavLink href="admin/reference-documents">Referans Dokümanları</NavLink>
-                <NavLink href="admin/curriculum-review">Müfredat Onayı</NavLink>
                 <NavLink href="admin/users">Kullanıcılar</NavLink>
+                <NavLink href="admin/permissions">Yetkiler</NavLink>
                 <NavLink href="admin/settings">Ayarlar</NavLink>
             </AuthorizeView>
         </nav>
