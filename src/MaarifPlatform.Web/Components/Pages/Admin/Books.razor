@@ -2,6 +2,7 @@
 @rendermode InteractiveServer
 @attribute [Authorize(Roles = "Admin")]
 @using MaarifPlatform.Application.Storage
+@using MaarifPlatform.Infrastructure.Curriculum
 @using MaarifPlatform.Infrastructure.Extraction
 @using MaarifPlatform.Infrastructure.Persistence
 @using Microsoft.AspNetCore.Components.Forms
@@ -21,9 +22,40 @@
     <EditForm Model="_form" OnValidSubmit="UploadAsync">
         <DataAnnotationsValidator />
         <div class="field"><label>Başlık</label><InputText @bind-Value="_form.Title" /></div>
-        <div class="field"><label>Sınıf</label><InputNumber @bind-Value="_form.Grade" /></div>
-        <div class="field"><label>Ders</label><InputText @bind-Value="_form.Subject" /></div>
-        <div class="field"><label>Yayınevi</label><InputText @bind-Value="_form.Publisher" /></div>
+        <div class="field">
+            <label>Sınıf</label>
+            <InputSelect @bind-Value="_form.Grade" @bind-Value:after="OnGradeChanged">
+                <option value="">— seçin —</option>
+                @foreach (var g in NationalCurriculumCatalog.Grades)
+                {
+                    <option value="@g">@g. Sınıf</option>
+                }
+            </InputSelect>
+        </div>
+        <div class="field">
+            <label>Ders</label>
+            <InputSelect @bind-Value="_form.Subject">
+                <option value="">— seçin —</option>
+                @foreach (var s in _subjects)
+                {
+                    <option value="@s">@s</option>
+                }
+            </InputSelect>
+        </div>
+        <div class="field">
+            <label>Yayınevi</label>
+            <InputSelect @bind-Value="_form.PublisherSelection">
+                @foreach (var p in _publishers)
+                {
+                    <option value="@p">@p</option>
+                }
+                <option value="@OtherPublisherValue">— Yeni Ekle —</option>
+            </InputSelect>
+            @if (_form.PublisherSelection == OtherPublisherValue)
+            {
+                <InputText @bind-Value="_form.PublisherOther" placeholder="Yeni yayınevi adı" />
+            }
+        </div>
         <div class="field"><label>PDF Dosyası</label><InputFile OnChange="OnFileSelected" accept=".pdf" /></div>
         <button type="submit" disabled="@(_selectedFile is null || _uploading)">@(_uploading ? "Yükleniyor..." : "Yükle")</button>
     </EditForm>
@@ -65,14 +97,28 @@ else
 }
 
 @code {
+    // §16 Kitaplar formu: "MEB muhakkak listede olsun" — DB'de hiç kitap yokken bile Yayınevi
+    // listesi boş kalmasın diye MEB, mevcut kitaplardan çekilen distinct yayınevlerinin
+    // ÖNÜNE sabit olarak eklenir (ReferenceDocuments.razor'daki KnownAuthorities/
+    // OtherAuthorityValue "listede yoksa yeni ekle" deseniyle AYNI mantık).
+    private const string OtherPublisherValue = "__yeni__";
+
     private BookForm _form = new();
     private IBrowserFile? _selectedFile;
     private bool _uploading;
     private string? _error;
     private Guid? _deletingId;
     private List<BookRow>? _books;
+    private List<string> _subjects = new();
+    private List<string> _publishers = new() { "MEB" };
 
     protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private void OnGradeChanged()
+    {
+        _form.Subject = string.Empty;
+        _subjects = _form.Grade is null ? new() : NationalCurriculumCatalog.GetCoursesForGrade(_form.Grade.Value).ToList();
+    }
 
     private async Task LoadAsync()
     {
@@ -84,6 +130,18 @@ else
             .Select(b => new BookRow(b.Id, b.Title, b.Grade, b.Subject, b.SourceType.ToString(), b.TotalPages,
                 db.Questions.Count(q => q.BookId == b.Id)))
             .ToListAsync();
+
+        var existingPublishers = await db.Books
+            .Where(b => b.Publisher != null && b.Publisher != "")
+            .Select(b => b.Publisher!)
+            .Distinct()
+            .ToListAsync();
+
+        _publishers = new List<string> { "MEB" }
+            .Concat(existingPublishers
+                .Where(p => !string.Equals(p, "MEB", StringComparison.OrdinalIgnoreCase))
+                .OrderBy(p => p, StringComparer.CurrentCultureIgnoreCase))
+            .ToList();
     }
 
     private void OnFileSelected(InputFileChangeEventArgs e) => _selectedFile = e.File;
@@ -95,6 +153,12 @@ else
             return;
         }
 
+        if (_form.PublisherSelection == OtherPublisherValue && string.IsNullOrWhiteSpace(_form.PublisherOther))
+        {
+            _error = "Yeni yayınevi adı boş olamaz.";
+            return;
+        }
+
         _uploading = true;
         _error = null;
         try
@@ -103,7 +167,8 @@ else
             var db = scope.ServiceProvider.GetRequiredService<MaarifDbContext>();
             var storage = scope.ServiceProvider.GetRequiredService<IBookFileStorage>();
 
-            var book = new Book { Title = _form.Title, Grade = _form.Grade, Subject = _form.Subject, Publisher = _form.Publisher };
+            var publisher = _form.PublisherSelection == OtherPublisherValue ? _form.PublisherOther : _form.PublisherSelection;
+            var book = new Book { Title = _form.Title, Grade = _form.Grade, Subject = _form.Subject, Publisher = publisher };
 
             await using (var stream = _selectedFile.OpenReadStream(maxAllowedSize: 200 * 1024 * 1024))
             {
@@ -114,6 +179,7 @@ else
             await db.SaveChangesAsync();
 
             _form = new();
+            _subjects = new();
             _selectedFile = null;
             await LoadAsync();
         }
@@ -186,7 +252,8 @@ else
         public int? Grade { get; set; }
         [System.ComponentModel.DataAnnotations.Required]
         public string Subject { get; set; } = string.Empty;
-        public string? Publisher { get; set; }
+        public string PublisherSelection { get; set; } = "MEB";
+        public string? PublisherOther { get; set; }
     }
 
     private sealed record BookRow(Guid Id, string Title, int? Grade, string Subject, string SourceType, int? TotalPages, int QuestionCount);
