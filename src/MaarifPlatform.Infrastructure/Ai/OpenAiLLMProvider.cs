@@ -82,14 +82,7 @@ public class OpenAiLLMProvider : ILLMProvider
         using var argsDoc = JsonDocument.Parse(toolCall.FunctionArguments);
         var input = argsDoc.RootElement.EnumerateObject().ToDictionary(p => p.Name, p => p.Value);
 
-        var usage = completion.Usage;
-        var inputTokens = usage.InputTokenCount;
-        var outputTokens = usage.OutputTokenCount;
-        var aiUsage = new AiUsage(
-            Name, options.Model, inputTokens, outputTokens,
-            OpenAiPricing.EstimateCostUsd(options.Model, inputTokens, outputTokens),
-            (int)stopwatch.ElapsedMilliseconds);
-
+        var aiUsage = BuildUsage(completion, stopwatch, options);
         return ParseEvaluateResult(input, aiUsage);
     }
 
@@ -215,10 +208,13 @@ public class OpenAiLLMProvider : ILLMProvider
     {
         var inputTokens = completion.Usage.InputTokenCount;
         var outputTokens = completion.Usage.OutputTokenCount;
+        var cachedTokens = completion.Usage.InputTokenDetails?.CachedTokenCount ?? 0;
         return new AiUsage(
             Name, options.Model, inputTokens, outputTokens,
-            OpenAiPricing.EstimateCostUsd(options.Model, inputTokens, outputTokens),
-            (int)stopwatch.ElapsedMilliseconds);
+            OpenAiPricing.EstimateCostUsd(options.Model, inputTokens, outputTokens, cachedTokens),
+            (int)stopwatch.ElapsedMilliseconds,
+            CacheCreationInputTokens: 0,
+            CacheReadInputTokens: cachedTokens);
     }
 
     private static ChatTool BuildGenerationTool()

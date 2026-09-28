@@ -227,12 +227,17 @@ public class GenerationOrchestrationService(
                     .Select(r => new GroundingReference(r.ReferenceDocumentId, r.Page, r.SectionPath, r.ChunkText))
                     .ToList();
 
+                // §9 maliyet ilkesi: kör bir tekrar yerine, önceki denemenin GERÇEK ret gerekçesini
+                // Generator'a somut düzeltme talimatı olarak ver — attempt 2'nin isabet oranını
+                // artırır (bkz. AnthropicLLMProvider.BuildGenerateSystemPrompt), aksi halde aynı
+                // hatayla ikinci kez de reddedilip Generation+CurriculumValidation çağrısı boşa gider.
                 var generateRequest = new GenerateQuestionRequest(
                     request.Grade, request.Subject, request.Theme, request.LearningOutcomeCode,
                     item.Difficulty.ToString(), item.QuestionType, request.Context, request.ReasoningRequirement,
                     grounding, request.SkillCodes,
                     item.ContentFramework is null ? [] : [item.ContentFramework],
-                    request.ProcessComponents, request.VisualUsage, request.LearningOutcomeDescription);
+                    request.ProcessComponents, request.VisualUsage, request.LearningOutcomeDescription,
+                    PreviousAttemptFeedback: attemptMessages.Count > 0 ? attemptMessages[^1] : null);
 
                 GenerateQuestionResult generated;
                 try

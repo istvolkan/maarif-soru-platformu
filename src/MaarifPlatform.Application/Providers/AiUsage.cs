@@ -8,7 +8,9 @@ public sealed record AiUsage(
     int InputTokens,
     int OutputTokens,
     decimal CostUsd,
-    int LatencyMs);
+    int LatencyMs,
+    int CacheCreationInputTokens = 0,
+    int CacheReadInputTokens = 0);
 
 /// <summary>RAG'den gelen ve prompt'a enjekte edilen, atıf zorunlu bağlam parçası (§G).</summary>
 public sealed record GroundingReference(

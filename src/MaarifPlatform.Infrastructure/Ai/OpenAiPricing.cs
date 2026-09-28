@@ -12,8 +12,21 @@ public static class OpenAiPricing
     };
 
     public static decimal EstimateCostUsd(string model, int inputTokens, int outputTokens)
+        => EstimateCostUsd(model, inputTokens, outputTokens, 0);
+
+    /// <summary>OpenAI, Anthropic'in aksine cache_control gerektirmeyen OTOMATİK prompt caching
+    /// uygular (aynı prefix'e sahip &gt;1024 token'lık istekler için) — kodda tetiklemeye gerek
+    /// yok, yalnızca maliyeti doğru yansıtmak için cachedTokens (usage.InputTokenDetails.
+    /// CachedTokenCount) ayrıca düşülüp indirimli fiyatla eklenir. cachedTokens zaten inputTokens
+    /// İÇİNDE sayılır (ayrı bir sayaç değil) — bu yüzden taban maliyetten çıkarılıp indirimli
+    /// oranla geri eklenir. İndirim oranı (~%50) OpenAI'nin güncel dokümantasyonundan teyit
+    /// edilmeli (bkz. OpenAiOptions.Model'deki aynı uyarı).</summary>
+    public static decimal EstimateCostUsd(string model, int inputTokens, int outputTokens, int cachedTokens)
     {
         var (inputPer1M, outputPer1M) = Prices.TryGetValue(model, out var price) ? price : Prices["gpt-4o"];
-        return inputTokens / 1_000_000m * inputPer1M + outputTokens / 1_000_000m * outputPer1M;
+        var uncachedInputTokens = Math.Max(0, inputTokens - cachedTokens);
+        return uncachedInputTokens / 1_000_000m * inputPer1M
+            + cachedTokens / 1_000_000m * inputPer1M * 0.5m
+            + outputTokens / 1_000_000m * outputPer1M;
     }
 }

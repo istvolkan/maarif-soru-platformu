@@ -72,6 +72,7 @@ public class AnthropicLLMProvider : ILLMProvider
             Tools = [BuildAnalysisTool()],
             ToolChoice = new ToolChoiceTool { Name = ToolName },
             Messages = [new() { Role = Role.User, Content = BuildUserContent(request) }],
+            CacheControl = new CacheControlEphemeral(),
         };
 
         var stopwatch = Stopwatch.StartNew();
@@ -84,16 +85,7 @@ public class AnthropicLLMProvider : ILLMProvider
             .FirstOrDefault(b => b.Name == ToolName)
             ?? throw new InvalidOperationException("Anthropic yanıtında beklenen submit_analysis tool_use bloğu bulunamadı.");
 
-        var inputTokens = (int)response.Usage.InputTokens;
-        var outputTokens = (int)response.Usage.OutputTokens;
-        var usage = new AiUsage(
-            Name,
-            options.Model,
-            inputTokens,
-            outputTokens,
-            AnthropicPricing.EstimateCostUsd(options.Model, inputTokens, outputTokens),
-            (int)stopwatch.ElapsedMilliseconds);
-
+        var usage = BuildUsage(response, stopwatch, options);
         return ParseResult(toolUse.Input, usage);
     }
 
@@ -108,6 +100,7 @@ public class AnthropicLLMProvider : ILLMProvider
             Tools = [BuildTransformationTool()],
             ToolChoice = new ToolChoiceTool { Name = TransformToolName },
             Messages = [new() { Role = Role.User, Content = request.OriginalQuestion }],
+            CacheControl = new CacheControlEphemeral(),
         };
 
         var stopwatch = Stopwatch.StartNew();
@@ -135,6 +128,7 @@ public class AnthropicLLMProvider : ILLMProvider
             Tools = [BuildEvaluationTool()],
             ToolChoice = new ToolChoiceTool { Name = EvaluateToolName },
             Messages = [new() { Role = Role.User, Content = BuildEvaluateUserContent(request) }],
+            CacheControl = new CacheControlEphemeral(),
         };
 
         var stopwatch = Stopwatch.StartNew();
@@ -162,6 +156,7 @@ public class AnthropicLLMProvider : ILLMProvider
             Tools = [BuildGenerationTool()],
             ToolChoice = new ToolChoiceTool { Name = GenerateToolName },
             Messages = [new() { Role = Role.User, Content = BuildGenerateUserContent(request) }],
+            CacheControl = new CacheControlEphemeral(),
         };
 
         var stopwatch = Stopwatch.StartNew();
@@ -189,6 +184,7 @@ public class AnthropicLLMProvider : ILLMProvider
             Tools = [BuildRecommendRevisionTool()],
             ToolChoice = new ToolChoiceTool { Name = RecommendRevisionToolName },
             Messages = [new() { Role = Role.User, Content = request.OriginalQuestion }],
+            CacheControl = new CacheControlEphemeral(),
         };
 
         var stopwatch = Stopwatch.StartNew();
@@ -217,6 +213,7 @@ public class AnthropicLLMProvider : ILLMProvider
             Tools = [BuildExtractCurriculumTool()],
             ToolChoice = new ToolChoiceTool { Name = ExtractCurriculumToolName },
             Messages = [new() { Role = Role.User, Content = $"Sınıf {request.Grade}, {request.Subject} için yukarıdaki dokümandan müfredat yapısını çıkar." }],
+            CacheControl = new CacheControlEphemeral(),
         };
 
         var stopwatch = Stopwatch.StartNew();
@@ -386,6 +383,7 @@ public class AnthropicLLMProvider : ILLMProvider
             Tools = [BuildValidateCurriculumAlignmentTool()],
             ToolChoice = new ToolChoiceTool { Name = ValidateCurriculumAlignmentToolName },
             Messages = [new() { Role = Role.User, Content = request.QuestionText }],
+            CacheControl = new CacheControlEphemeral(),
         };
 
         var stopwatch = Stopwatch.StartNew();
@@ -506,14 +504,22 @@ public class AnthropicLLMProvider : ILLMProvider
             """;
     }
 
+    /// <summary>§9 maliyet ilkesi / prompt caching: CacheControl her çağrıda açık (bkz. yukarıdaki
+    /// MessageCreateParams kurulumları), bu yüzden gerçek maliyet artık InputTokens tek başına
+    /// yeterli değil — cache_creation (ilk çağrı, taban fiyatın ~1.25 katı) ve cache_read (tekrar
+    /// eden aynı sistem promptu/araç şeması, ~0.1 katı — asıl tasarruf) AYRI sayaçlar.</summary>
     private AiUsage BuildUsage(Message response, Stopwatch stopwatch, AnthropicOptions options)
     {
         var inputTokens = (int)response.Usage.InputTokens;
         var outputTokens = (int)response.Usage.OutputTokens;
+        var cacheCreationTokens = (int)(response.Usage.CacheCreationInputTokens ?? 0);
+        var cacheReadTokens = (int)(response.Usage.CacheReadInputTokens ?? 0);
         return new AiUsage(
             Name, options.Model, inputTokens, outputTokens,
-            AnthropicPricing.EstimateCostUsd(options.Model, inputTokens, outputTokens),
-            (int)stopwatch.ElapsedMilliseconds);
+            AnthropicPricing.EstimateCostUsd(options.Model, inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens),
+            (int)stopwatch.ElapsedMilliseconds,
+            cacheCreationTokens,
+            cacheReadTokens);
     }
 
     private static Tool BuildAnalysisTool()
@@ -980,8 +986,24 @@ public class AnthropicLLMProvider : ILLMProvider
             _ => "\n        - Görsel KULLANMA: visual_required=false."
         };
 
+        // §9 maliyet ilkesi: önceki deneme reddedildiyse gerekçeyi kör bir tekrar yerine somut
+        // düzeltme talimatı olarak ver — aksi halde aynı hata büyük olasılıkla tekrarlanır ve
+        // Generation+CurriculumValidation çağrıları boşa (0 sonuçla) harcanmış olur.
+        var previousAttemptBlock = string.IsNullOrWhiteSpace(request.PreviousAttemptFeedback)
+            ? ""
+            : $"""
+
+
+            ÖNCEKİ DENEME REDDEDİLDİ — NEDENİ:
+            {request.PreviousAttemptFeedback}
+
+            Bu sefer YUKARIDAKİ SORUNU somut olarak çöz; aynı hatayı tekrarlama. Özellikle
+            süreç bileşeninin/muhakeme gerekliliğinin sorunun ÇÖZÜMÜNDE gerçekten kullanılmasını
+            sağla (yalnızca yüzeysel bir bağlam değil).
+            """;
+
         return $"""
-        Sen Türkiye Yüzyılı Maarif Modeli'ne göre sıfırdan matematik sorusu üreten bir uzmansın.
+        Sen Türkiye Yüzyılı Maarif Modeli'ne göre sıfırdan matematik sorusu üreten bir uzmansın.{previousAttemptBlock}
 
         HEDEF:
         - Sınıf: {request.Grade}, Ders: {request.Subject}

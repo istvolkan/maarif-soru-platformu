@@ -15,8 +15,19 @@ public static class AnthropicPricing
     };
 
     public static decimal EstimateCostUsd(string model, int inputTokens, int outputTokens)
+        => EstimateCostUsd(model, inputTokens, outputTokens, 0, 0);
+
+    /// <summary>Prompt caching (bkz. AnthropicLLMProvider'daki top-level CacheControl) devredeyken
+    /// gerçek maliyet artık yalnızca InputTokens'tan hesaplanamaz — Anthropic cache_creation ve
+    /// cache_read token'larını AYRI sayaçlarda döner. Fiyatlandırma: 5dk TTL cache yazımı taban
+    /// input fiyatının ~1.25 katı (bir kerelik "yazma" bedeli), cache okuma ise ~0.1 katı (asıl
+    /// tasarruf burada). Kaynak: https://platform.claude.com/docs/en/build-with-claude/prompt-caching</summary>
+    public static decimal EstimateCostUsd(string model, int inputTokens, int outputTokens, int cacheCreationTokens, int cacheReadTokens)
     {
         var (inputPer1M, outputPer1M) = Prices.TryGetValue(model, out var price) ? price : Prices["claude-opus-4-8"];
-        return inputTokens / 1_000_000m * inputPer1M + outputTokens / 1_000_000m * outputPer1M;
+        return inputTokens / 1_000_000m * inputPer1M
+            + outputTokens / 1_000_000m * outputPer1M
+            + cacheCreationTokens / 1_000_000m * inputPer1M * 1.25m
+            + cacheReadTokens / 1_000_000m * inputPer1M * 0.1m;
     }
 }
