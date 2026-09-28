@@ -61,6 +61,7 @@ public class GenerationOrchestrationService(
     IOptionsMonitor<AiRoutingOptions> aiRouting,
     IOptionsMonitor<JudgeRoutingOptions> judgeRoutingOptions,
     IOptionsMonitor<GenerationRoutingOptions> generationRoutingOptions,
+    IOptionsMonitor<Dictionary<string, string?>> difficultyRouting,
     ReferenceSearchService searchService,
     CurriculumQueryService curriculumQuery,
     QuestionSimilarityService similarityService,
@@ -190,14 +191,12 @@ public class GenerationOrchestrationService(
         // Sprint 11 canlı-yeniden-yükleme deseni: her batch başında bir kez okunur (blueprint
         // tamamlanana kadar tutarlı kalması için — Ayarlar ortasında değişirse bir sonraki
         // "Üret" çağrısında etkili olur).
-        var llmProvider = providerFactory.Get(aiRouting.CurrentValue.Provider);
         var generationRouting = generationRoutingOptions.CurrentValue;
         var judgeRouting = judgeRoutingOptions.CurrentValue;
-        var curriculumValidatorProvider = providerFactory.Get(
-            string.IsNullOrWhiteSpace(generationRouting.CurriculumValidatorProvider)
-                ? aiRouting.CurrentValue.Provider
-                : generationRouting.CurriculumValidatorProvider);
         var maxAttempts = Math.Max(1, generationRouting.MaxRegenerationAttempts);
+        var defaultCurriculumValidatorProviderName = string.IsNullOrWhiteSpace(generationRouting.CurriculumValidatorProvider)
+            ? aiRouting.CurrentValue.Provider
+            : generationRouting.CurriculumValidatorProvider;
 
         var succeeded = 0;
         var failed = 0;
@@ -209,6 +208,15 @@ public class GenerationOrchestrationService(
             var attemptMessages = new List<string>();
             GenerateQuestionResult? accepted = null;
             string? acceptedSvg = null;
+
+            // §16 zorluk bazlı yönlendirme: bu slotun DifficultyLevel'ine göre Generator/
+            // CurriculumValidator/Judge'ın ÜÇÜ de AYRI bir (sağlayıcı, model) çiftine
+            // yönlendirilebilir (ör. Kolay→OpenAI gpt-6-luna, Zor→Anthropic claude-opus-4-8) —
+            // hiçbiri Admin Ayarlar'da override edilmemişse mevcut global varsayılanlara düşülür.
+            var (llmProvider, generatorModel) = ResolveRoute("Generation", item.Difficulty, aiRouting.CurrentValue.Provider);
+            var (curriculumValidatorProvider, curriculumValidatorModel) = ResolveRoute(
+                "CurriculumValidation", item.Difficulty, defaultCurriculumValidatorProviderName);
+            var (judgeProvider, judgeModel) = ResolveRoute("Judge", item.Difficulty, aiRouting.CurrentValue.Provider);
 
             for (var attempt = 1; attempt <= maxAttempts && accepted is null; attempt++)
             {
@@ -237,7 +245,8 @@ public class GenerationOrchestrationService(
                     grounding, request.SkillCodes,
                     item.ContentFramework is null ? [] : [item.ContentFramework],
                     request.ProcessComponents, request.VisualUsage, request.LearningOutcomeDescription,
-                    PreviousAttemptFeedback: attemptMessages.Count > 0 ? attemptMessages[^1] : null);
+                    PreviousAttemptFeedback: attemptMessages.Count > 0 ? attemptMessages[^1] : null,
+                    ModelOverride: generatorModel);
 
                 GenerateQuestionResult generated;
                 try
@@ -261,7 +270,7 @@ public class GenerationOrchestrationService(
                     alignment = await curriculumValidatorProvider.ValidateCurriculumAlignmentAsync(
                         new ValidateCurriculumAlignmentRequest(
                             generated.Question, request.LearningOutcomeCode, request.LearningOutcomeDescription,
-                            request.ProcessComponents), ct);
+                            request.ProcessComponents, ModelOverride: curriculumValidatorModel), ct);
                 }
                 catch (Exception ex)
                 {
@@ -283,12 +292,13 @@ public class GenerationOrchestrationService(
                     $"Soru {slotNo}/{blueprint.Count}: matematiksel doğruluk kontrol ediliyor…", null, null, null);
 
                 var evalRequest = new EvaluateQuestionRequest(
-                    generated.Question, generated.Options, generated.CorrectAnswer, generated.Solution, grounding);
+                    generated.Question, generated.Options, generated.CorrectAnswer, generated.Solution, grounding,
+                    ModelOverride: judgeModel);
 
                 EvaluateQuestionResult evalResult;
                 try
                 {
-                    evalResult = await llmProvider.EvaluateQuestionAsync(evalRequest, ct);
+                    evalResult = await judgeProvider.EvaluateQuestionAsync(evalRequest, ct);
                 }
                 catch (Exception ex)
                 {
@@ -296,7 +306,7 @@ public class GenerationOrchestrationService(
                     continue;
                 }
 
-                db.AiRuns.Add(BuildAiRun(null, PipelineStage.Judge, evalResult.Usage, llmProvider.Name));
+                db.AiRuns.Add(BuildAiRun(null, PipelineStage.Judge, evalResult.Usage, judgeProvider.Name));
 
                 // §8/§10 ile AYNI çapraz-sağlayıcı consensus deseni (bkz. TransformationOrchestrationService).
                 var disagreementFlags = new List<string>();
@@ -480,6 +490,26 @@ public class GenerationOrchestrationService(
         await db.SaveChangesAsync(ct);
 
         return (question, version);
+    }
+
+    /// <summary>§16 zorluk bazlı model yönlendirme. <paramref name="stage"/> Admin Ayarlar'daki
+    /// üç adlandırılmış routing tablosundan ("Generation"/"CurriculumValidation"/"Judge") birine
+    /// karşılık gelir; anahtar <see cref="DifficultyLevel"/>.ToString(), değer "Sağlayıcı:Model"
+    /// (ör. "OpenAI:gpt-6-luna") ya da boş. Override yoksa <paramref name="fallbackProviderName"/>
+    /// ile mevcut varsayılan davranışa (model override'sız, sağlayıcının kendi Options.Model'i)
+    /// düşülür.</summary>
+    private (ILLMProvider Provider, string? Model) ResolveRoute(string stage, DifficultyLevel difficulty, string fallbackProviderName)
+    {
+        var routing = difficultyRouting.Get(stage);
+        if (routing.TryGetValue(difficulty.ToString(), out var raw) && !string.IsNullOrWhiteSpace(raw))
+        {
+            var parts = raw.Split(':', 2);
+            var providerName = parts[0].Trim();
+            var model = parts.Length > 1 && !string.IsNullOrWhiteSpace(parts[1]) ? parts[1].Trim() : null;
+            return (providerFactory.Get(providerName), model);
+        }
+
+        return (providerFactory.Get(fallbackProviderName), null);
     }
 
     private static AiRun BuildAiRun(Guid? questionId, PipelineStage stage, AiUsage usage, string providerName) => new()

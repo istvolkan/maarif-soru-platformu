@@ -120,9 +120,10 @@ public class AnthropicLLMProvider : ILLMProvider
     public async Task<EvaluateQuestionResult> EvaluateQuestionAsync(EvaluateQuestionRequest request, CancellationToken ct = default)
     {
         var (options, client) = Current();
+        var model = request.ModelOverride ?? options.Model;
         var parameters = new MessageCreateParams
         {
-            Model = options.Model,
+            Model = model,
             MaxTokens = options.MaxTokens,
             System = BuildEvaluateSystemPrompt(request),
             Tools = [BuildEvaluationTool()],
@@ -141,16 +142,17 @@ public class AnthropicLLMProvider : ILLMProvider
             .FirstOrDefault(b => b.Name == EvaluateToolName)
             ?? throw new InvalidOperationException("Anthropic yanıtında beklenen submit_evaluation tool_use bloğu bulunamadı.");
 
-        var usage = BuildUsage(response, stopwatch, options);
+        var usage = BuildUsage(response, stopwatch, options, model);
         return ParseEvaluateResult(toolUse.Input, usage);
     }
 
     public async Task<GenerateQuestionResult> GenerateQuestionAsync(GenerateQuestionRequest request, CancellationToken ct = default)
     {
         var (options, client) = Current();
+        var model = request.ModelOverride ?? options.Model;
         var parameters = new MessageCreateParams
         {
-            Model = options.Model,
+            Model = model,
             MaxTokens = options.MaxTokens,
             System = BuildGenerateSystemPrompt(request),
             Tools = [BuildGenerationTool()],
@@ -169,7 +171,7 @@ public class AnthropicLLMProvider : ILLMProvider
             .FirstOrDefault(b => b.Name == GenerateToolName)
             ?? throw new InvalidOperationException("Anthropic yanıtında beklenen submit_generation tool_use bloğu bulunamadı.");
 
-        var usage = BuildUsage(response, stopwatch, options);
+        var usage = BuildUsage(response, stopwatch, options, model);
         return ParseGenerateResult(toolUse.Input, usage);
     }
 
@@ -375,9 +377,10 @@ public class AnthropicLLMProvider : ILLMProvider
     public async Task<CurriculumAlignmentResult> ValidateCurriculumAlignmentAsync(ValidateCurriculumAlignmentRequest request, CancellationToken ct = default)
     {
         var (options, client) = Current();
+        var model = request.ModelOverride ?? options.Model;
         var parameters = new MessageCreateParams
         {
-            Model = options.Model,
+            Model = model,
             MaxTokens = options.MaxTokens,
             System = BuildValidateCurriculumAlignmentSystemPrompt(request),
             Tools = [BuildValidateCurriculumAlignmentTool()],
@@ -396,7 +399,7 @@ public class AnthropicLLMProvider : ILLMProvider
             .FirstOrDefault(b => b.Name == ValidateCurriculumAlignmentToolName)
             ?? throw new InvalidOperationException("Anthropic yanıtında beklenen submit_curriculum_alignment tool_use bloğu bulunamadı.");
 
-        var usage = BuildUsage(response, stopwatch, options);
+        var usage = BuildUsage(response, stopwatch, options, model);
         var input = toolUse.Input;
 
         static List<string> GetStringArray(IReadOnlyDictionary<string, JsonElement> input, string key) =>
@@ -508,15 +511,20 @@ public class AnthropicLLMProvider : ILLMProvider
     /// MessageCreateParams kurulumları), bu yüzden gerçek maliyet artık InputTokens tek başına
     /// yeterli değil — cache_creation (ilk çağrı, taban fiyatın ~1.25 katı) ve cache_read (tekrar
     /// eden aynı sistem promptu/araç şeması, ~0.1 katı — asıl tasarruf) AYRI sayaçlar.</summary>
-    private AiUsage BuildUsage(Message response, Stopwatch stopwatch, AnthropicOptions options)
+    /// <summary>§16 zorluk bazlı model yönlendirme: çağıran taraf GenerateQuestionRequest/
+    /// EvaluateQuestionRequest/ValidateCurriculumAlignmentRequest.ModelOverride ile options.Model'i
+    /// geçersiz kılabildiği için gerçekte kullanılan model artık options.Model'den FARKLI olabilir —
+    /// maliyet/kayıt için çözülmüş modeli açıkça geçmek gerekir.</summary>
+    private AiUsage BuildUsage(Message response, Stopwatch stopwatch, AnthropicOptions options, string? modelOverride = null)
     {
+        var model = modelOverride ?? options.Model;
         var inputTokens = (int)response.Usage.InputTokens;
         var outputTokens = (int)response.Usage.OutputTokens;
         var cacheCreationTokens = (int)(response.Usage.CacheCreationInputTokens ?? 0);
         var cacheReadTokens = (int)(response.Usage.CacheReadInputTokens ?? 0);
         return new AiUsage(
-            Name, options.Model, inputTokens, outputTokens,
-            AnthropicPricing.EstimateCostUsd(options.Model, inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens),
+            Name, model, inputTokens, outputTokens,
+            AnthropicPricing.EstimateCostUsd(model, inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens),
             (int)stopwatch.ElapsedMilliseconds,
             cacheCreationTokens,
             cacheReadTokens);

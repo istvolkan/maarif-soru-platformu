@@ -33,8 +33,10 @@ public class OpenAiLLMProvider : ILLMProvider
 
     /// <summary>Sprint 11: bkz. AnthropicLLMProvider.Current() — aynı desen. ChatClient model'i
     /// constructor'da bağladığı için (Anthropic'in aksine), anahtar VEYA model değiştiğinde
-    /// yeniden kurulur.</summary>
-    private (OpenAiOptions Options, ChatClient Client) Current()
+    /// yeniden kurulur. §16 zorluk bazlı yönlendirme: modelOverride verilirse (aynı OpenAI
+    /// hesabı/anahtarı içinde farklı bir model, ör. gpt-6-luna vs gpt-6-sol) options.Model yerine
+    /// o kullanılır — tek bir global "OpenAI modeli" varsayımı artık geçerli değil.</summary>
+    private (OpenAiOptions Options, ChatClient Client, string Model) Current(string? modelOverride = null)
     {
         var options = _optionsMonitor.CurrentValue;
         if (string.IsNullOrWhiteSpace(options.ApiKey))
@@ -45,19 +47,20 @@ public class OpenAiLLMProvider : ILLMProvider
                 "Judge:SecondaryProvider boş bırakılmalı.");
         }
 
-        var clientKey = $"{options.ApiKey}|{options.Model}";
+        var model = modelOverride ?? options.Model;
+        var clientKey = $"{options.ApiKey}|{model}";
         if (_client is null || _clientKey != clientKey)
         {
-            _client = new ChatClient(model: options.Model, apiKey: options.ApiKey);
+            _client = new ChatClient(model: model, apiKey: options.ApiKey);
             _clientKey = clientKey;
         }
 
-        return (options, _client);
+        return (options, _client, model);
     }
 
     public async Task<EvaluateQuestionResult> EvaluateQuestionAsync(EvaluateQuestionRequest request, CancellationToken ct = default)
     {
-        var (options, client) = Current();
+        var (options, client, model) = Current(request.ModelOverride);
         var tool = BuildEvaluationTool();
         var chatOptions = new ChatCompletionOptions
         {
@@ -82,7 +85,7 @@ public class OpenAiLLMProvider : ILLMProvider
         using var argsDoc = JsonDocument.Parse(toolCall.FunctionArguments);
         var input = argsDoc.RootElement.EnumerateObject().ToDictionary(p => p.Name, p => p.Value);
 
-        var aiUsage = BuildUsage(completion, stopwatch, options);
+        var aiUsage = BuildUsage(completion, stopwatch, model);
         return ParseEvaluateResult(input, aiUsage);
     }
 
@@ -101,7 +104,7 @@ public class OpenAiLLMProvider : ILLMProvider
     /// promptu iki kez bakımı ayrı yerlerde yapmak yerine tek kaynaktan paylaşmak tercih edildi.</summary>
     public async Task<GenerateQuestionResult> GenerateQuestionAsync(GenerateQuestionRequest request, CancellationToken ct = default)
     {
-        var (options, client) = Current();
+        var (options, client, model) = Current(request.ModelOverride);
         var tool = BuildGenerationTool();
         var chatOptions = new ChatCompletionOptions
         {
@@ -124,13 +127,13 @@ public class OpenAiLLMProvider : ILLMProvider
             ?? throw new InvalidOperationException("OpenAI yanıtında beklenen submit_generation tool_call bulunamadı.");
 
         var input = ParseToolArguments(toolCall.FunctionArguments);
-        var usage = BuildUsage(completion, stopwatch, options);
+        var usage = BuildUsage(completion, stopwatch, model);
         return AnthropicLLMProvider.ParseGenerateResult(input, usage);
     }
 
     public async Task<ExtractCurriculumResult> ExtractCurriculumStructureAsync(ExtractCurriculumRequest request, CancellationToken ct = default)
     {
-        var (options, client) = Current();
+        var (options, client, model) = Current();
         var tool = BuildExtractCurriculumTool();
         var chatOptions = new ChatCompletionOptions
         {
@@ -153,13 +156,13 @@ public class OpenAiLLMProvider : ILLMProvider
             ?? throw new InvalidOperationException("OpenAI yanıtında beklenen submit_curriculum_structure tool_call bulunamadı.");
 
         var input = ParseToolArguments(toolCall.FunctionArguments);
-        var usage = BuildUsage(completion, stopwatch, options);
+        var usage = BuildUsage(completion, stopwatch, model);
         return AnthropicLLMProvider.ParseExtractCurriculumResult(input, usage);
     }
 
     public async Task<CurriculumAlignmentResult> ValidateCurriculumAlignmentAsync(ValidateCurriculumAlignmentRequest request, CancellationToken ct = default)
     {
-        var (options, client) = Current();
+        var (options, client, model) = Current(request.ModelOverride);
         var tool = BuildValidateCurriculumAlignmentTool();
         var chatOptions = new ChatCompletionOptions
         {
@@ -182,7 +185,7 @@ public class OpenAiLLMProvider : ILLMProvider
             ?? throw new InvalidOperationException("OpenAI yanıtında beklenen submit_curriculum_alignment tool_call bulunamadı.");
 
         var input = ParseToolArguments(toolCall.FunctionArguments);
-        var usage = BuildUsage(completion, stopwatch, options);
+        var usage = BuildUsage(completion, stopwatch, model);
 
         static List<string> GetStringArray(IReadOnlyDictionary<string, JsonElement> input, string key) =>
             input.TryGetValue(key, out var v) && v.ValueKind == JsonValueKind.Array
@@ -204,14 +207,17 @@ public class OpenAiLLMProvider : ILLMProvider
         return argsDoc.RootElement.EnumerateObject().ToDictionary(p => p.Name, p => p.Value.Clone());
     }
 
-    private AiUsage BuildUsage(ChatCompletion completion, Stopwatch stopwatch, OpenAiOptions options)
+    /// <summary>§16 zorluk bazlı yönlendirme: model artık options.Model ile aynı olmayabilir
+    /// (Current(modelOverride) çözülmüş modeli döner) — maliyet/kayıt için o çözülmüş model
+    /// kullanılır, tek bir global "OpenAI modeli" varsayımı geçerli değil.</summary>
+    private AiUsage BuildUsage(ChatCompletion completion, Stopwatch stopwatch, string model)
     {
         var inputTokens = completion.Usage.InputTokenCount;
         var outputTokens = completion.Usage.OutputTokenCount;
         var cachedTokens = completion.Usage.InputTokenDetails?.CachedTokenCount ?? 0;
         return new AiUsage(
-            Name, options.Model, inputTokens, outputTokens,
-            OpenAiPricing.EstimateCostUsd(options.Model, inputTokens, outputTokens, cachedTokens),
+            Name, model, inputTokens, outputTokens,
+            OpenAiPricing.EstimateCostUsd(model, inputTokens, outputTokens, cachedTokens),
             (int)stopwatch.ElapsedMilliseconds,
             CacheCreationInputTokens: 0,
             CacheReadInputTokens: cachedTokens);

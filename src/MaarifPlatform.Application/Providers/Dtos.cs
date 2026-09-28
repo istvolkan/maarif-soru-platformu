@@ -60,7 +60,8 @@ public sealed record EvaluateQuestionRequest(
     IReadOnlyList<string> Options,
     string CorrectAnswer,
     string Solution,
-    IReadOnlyList<GroundingReference> Grounding);
+    IReadOnlyList<GroundingReference> Grounding,
+    string? ModelOverride = null);
 
 public sealed record EvaluateQuestionResult(
     int QualityScore,
@@ -100,7 +101,8 @@ public sealed record GenerateQuestionRequest(
     IReadOnlyList<string>? ProcessComponents = null,
     string VisualUsage = "None",
     string LearningOutcomeDescription = "",
-    string? PreviousAttemptFeedback = null);
+    string? PreviousAttemptFeedback = null,
+    string? ModelOverride = null);
 
 // §6 Görsel Soru Motoru (Faz 2) — VisualRequired/VisualSpec yalnızca VisualUsage != "None"
 // istendiğinde dolu gelir. VisualSpec LLM'in ürettiği bir TARİFTİR, gerçek görsel değildir —
@@ -162,7 +164,8 @@ public sealed record ValidateCurriculumAlignmentRequest(
     string QuestionText,
     string LearningOutcomeCode,
     string LearningOutcomeDescription,
-    IReadOnlyList<string> ProcessComponents);
+    IReadOnlyList<string> ProcessComponents,
+    string? ModelOverride = null);
 
 public sealed record CurriculumAlignmentResult(
     bool MeasuresProcessComponent,

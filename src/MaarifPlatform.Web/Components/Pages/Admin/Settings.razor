@@ -167,6 +167,65 @@
     </fieldset>
 
     <fieldset>
+        <legend>Soru Üretimi — Zorluk Bazlı Model Yönlendirme</legend>
+        <p class="note">
+            Her hücre boş bırakılırsa ("— varsayılan —") o aşama için yukarıdaki genel ayar
+            (Ai Birincil Sağlayıcı / Curriculum Validator Sağlayıcı / Judge) kullanılır. Listeler,
+            yukarıdaki ilgili "Modelleri Getir" butonlarıyla doldurulan gerçek Anthropic/OpenAI
+            model kataloğundan gelir — önce onları doldurun.
+        </p>
+        <div class="routing-matrix-wrap">
+            <table class="routing-matrix">
+                <thead>
+                    <tr>
+                        <th>Zorluk</th>
+                        @foreach (var stage in _stages)
+                        {
+                            <th>@StageLabel(stage)</th>
+                        }
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var (diffKey, diffLabel) in _difficulties)
+                    {
+                        <tr>
+                            <td>@diffLabel</td>
+                            @foreach (var stage in _stages)
+                            {
+                                var cellKey = $"{stage}:{diffKey}";
+                                <td>
+                                    <select value="@_form.RoutingMatrix.GetValueOrDefault(cellKey, "")"
+                                            @onchange="e => _form.RoutingMatrix[cellKey] = e.Value?.ToString() ?? string.Empty">
+                                        <option value="">— varsayılan —</option>
+                                        @if (_anthropicModels.Count > 0)
+                                        {
+                                            <optgroup label="Anthropic">
+                                                @foreach (var m in _anthropicModels)
+                                                {
+                                                    <option value="Anthropic:@m.Id">@(m.DisplayName ?? m.Id)</option>
+                                                }
+                                            </optgroup>
+                                        }
+                                        @if (_openAiModels.Count > 0)
+                                        {
+                                            <optgroup label="OpenAI">
+                                                @foreach (var m in _openAiModels)
+                                                {
+                                                    <option value="OpenAI:@m.Id">@m.Id</option>
+                                                }
+                                            </optgroup>
+                                        }
+                                    </select>
+                                </td>
+                            }
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </fieldset>
+
+    <fieldset>
         <legend>Embeddings (RAG)</legend>
         <div class="field">
             <label>Sağlayıcı</label>
@@ -229,6 +288,27 @@
 
     .model-field ::deep input { flex: 1; min-width: 0; }
     .model-field select { max-width: 260px; }
+
+    .routing-matrix-wrap { overflow-x: auto; }
+
+    .routing-matrix {
+        border-collapse: collapse;
+        width: 100%;
+        min-width: 620px;
+    }
+
+    .routing-matrix th, .routing-matrix td {
+        border: 1px solid var(--z-border);
+        padding: 0.4rem 0.5rem;
+        text-align: left;
+    }
+
+    .routing-matrix th {
+        background: var(--z-card);
+        font-size: 0.85rem;
+    }
+
+    .routing-matrix select { width: 100%; max-width: 220px; }
 </style>
 
 @code {
@@ -236,6 +316,23 @@
     private bool _hasAnthropicKey, _hasGeminiKey, _hasVisionAnthropicKey, _hasOpenAiKey, _hasEmbeddingsKey;
     private string? _message;
     private string? _error;
+
+    // §16 zorluk bazlı model yönlendirme — GenerationOrchestrationService.ResolveRoute ile AYNI
+    // sağlayıcı/zorluk isim setini kullanır (stage adları config anahtarına, DifficultyLevel adları
+    // enum'a birebir eşlenir).
+    private static readonly string[] _stages = ["Generation", "CurriculumValidation", "Judge"];
+    private static readonly (string Key, string Label)[] _difficulties =
+    [
+        ("VeryEasy", "Çok Kolay"), ("Easy", "Kolay"), ("Medium", "Orta"), ("Hard", "Zor"), ("VeryHard", "İleri Düzey")
+    ];
+
+    private static string StageLabel(string stage) => stage switch
+    {
+        "Generation" => "Generator",
+        "CurriculumValidation" => "Curriculum Validator",
+        "Judge" => "Judge",
+        _ => stage
+    };
 
     private List<ProviderModelOption> _anthropicModels = new();
     private List<ProviderModelOption> _openAiModels = new();
@@ -275,6 +372,19 @@
         _form.EmbeddingsProvider = Configuration["Embeddings:Provider"] ?? "Local";
         _form.EmbeddingsModel = Configuration["Embeddings:OpenAI:Model"] ?? "text-embedding-3-small";
         _hasEmbeddingsKey = !string.IsNullOrWhiteSpace(Configuration["Embeddings:OpenAI:ApiKey"]);
+
+        _form.RoutingMatrix.Clear();
+        foreach (var stage in _stages)
+        {
+            foreach (var (diffKey, _) in _difficulties)
+            {
+                var value = Configuration[$"{stage}:Routing:{diffKey}"];
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    _form.RoutingMatrix[$"{stage}:{diffKey}"] = value;
+                }
+            }
+        }
     }
 
     private static string KeyStatus(bool hasKey) => hasKey ? "(ayarlı)" : "(ayarlı değil)";
@@ -429,6 +539,15 @@
             await SetAsync("Embeddings:OpenAI:Model", _form.EmbeddingsModel);
             if (!string.IsNullOrWhiteSpace(_form.EmbeddingsApiKey)) await SetAsync("Embeddings:OpenAI:ApiKey", _form.EmbeddingsApiKey);
 
+            foreach (var stage in _stages)
+            {
+                foreach (var (diffKey, _) in _difficulties)
+                {
+                    var cellKey = $"{stage}:{diffKey}";
+                    await SetAsync($"{stage}:Routing:{diffKey}", _form.RoutingMatrix.GetValueOrDefault(cellKey, ""));
+                }
+            }
+
             _message = "Ayarlar kaydedildi ve etkinleştirildi.";
             _form.AnthropicApiKey = _form.OpenAiApiKey = _form.GeminiApiKey = _form.VisionAnthropicApiKey = _form.EmbeddingsApiKey = "";
             OnInitialized();
@@ -469,5 +588,9 @@
         public int? GenerationMaxRegenerationAttempts { get; set; }
         public double? GenerationSimilarityRejectThreshold { get; set; }
         public int? GenerationMaxQuestionCount { get; set; }
+
+        /// <summary>Anahtar "{Stage}:{DifficultyKey}" (ör. "Generation:Hard"), değer
+        /// "Sağlayıcı:Model" (ör. "OpenAI:gpt-6-luna") ya da hücre yoksa boş/eksik = varsayılan.</summary>
+        public Dictionary<string, string> RoutingMatrix { get; set; } = new();
     }
 }

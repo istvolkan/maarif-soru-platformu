@@ -9,6 +9,10 @@ public static class OpenAiPricing
     {
         ["gpt-4o"] = (2.50m, 10.00m),
         ["gpt-4o-mini"] = (0.15m, 0.60m),
+        // §16 zorluk bazlı yönlendirme — 2026-09-22 tarihli GPT-6 ailesi (Luna/Sol/Astra).
+        ["gpt-6-luna"] = (0.10m, 0.50m),
+        ["gpt-6-sol"] = (2.00m, 10.00m),
+        ["gpt-6-astra"] = (10.00m, 50.00m),
     };
 
     public static decimal EstimateCostUsd(string model, int inputTokens, int outputTokens)
@@ -23,7 +27,9 @@ public static class OpenAiPricing
     /// edilmeli (bkz. OpenAiOptions.Model'deki aynı uyarı).</summary>
     public static decimal EstimateCostUsd(string model, int inputTokens, int outputTokens, int cachedTokens)
     {
-        var (inputPer1M, outputPer1M) = Prices.TryGetValue(model, out var price) ? price : Prices["gpt-4o"];
+        // Bilinmeyen bir model için en pahalı bilinen katmana (Astra) düşer — AnthropicPricing'in
+        // Opus fallback'iyle AYNI ilke: maliyeti olduğundan düşük göstermemek.
+        var (inputPer1M, outputPer1M) = Prices.TryGetValue(model, out var price) ? price : Prices["gpt-6-astra"];
         var uncachedInputTokens = Math.Max(0, inputTokens - cachedTokens);
         return uncachedInputTokens / 1_000_000m * inputPer1M
             + cachedTokens / 1_000_000m * inputPer1M * 0.5m

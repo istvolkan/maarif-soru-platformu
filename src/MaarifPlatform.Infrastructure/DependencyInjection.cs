@@ -88,6 +88,18 @@ public static class DependencyInjection
         services.Configure<JudgeRoutingOptions>(configuration.GetSection("Judge"));
         services.Configure<GenerationRoutingOptions>(configuration.GetSection("Generation"));
 
+        // §16 zorluk bazlı model yönlendirme — GenerateBatchAsync'in her slotu için kendi
+        // Difficulty'sine göre Generator/CurriculumValidator/Judge aşamalarından her biri AYRI
+        // bir (sağlayıcı, model) çiftine yönlendirilebilir (ör. Kolay→OpenAI gpt-6-luna,
+        // Zor→Anthropic claude-opus-4-8). Aynı Dictionary<string,string?> şekli üç farklı config
+        // bölümüne (adlandırılmış options) bağlanır; anahtar = DifficultyLevel.ToString()
+        // ("Easy","Hard",...), değer = "Sağlayıcı:Model" veya boş (o zorlukta override yok,
+        // mevcut varsayılana düşülür). services.Configure<T>(name, section) .NET'in yerleşik
+        // adlandırılmış-options mekanizması — IOptionsMonitor<Dictionary<string,string?>>.Get(name).
+        services.Configure<Dictionary<string, string?>>("Generation", configuration.GetSection("Generation:Routing"));
+        services.Configure<Dictionary<string, string?>>("CurriculumValidation", configuration.GetSection("CurriculumValidation:Routing"));
+        services.Configure<Dictionary<string, string?>>("Judge", configuration.GetSection("Judge:Routing"));
+
         services.AddScoped<AnalysisOrchestrationService>();
         services.AddScoped<TransformationOrchestrationService>();
         services.AddScoped<GenerationOrchestrationService>();
