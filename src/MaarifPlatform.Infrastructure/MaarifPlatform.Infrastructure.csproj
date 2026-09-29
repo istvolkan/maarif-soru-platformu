@@ -1,6 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <ProjectReference Include="..\MaarifPlatform.Domain\MaarifPlatform.Domain.csproj" />
     <ProjectReference Include="..\MaarifPlatform.Application\MaarifPlatform.Application.csproj" />
   </ItemGroup>

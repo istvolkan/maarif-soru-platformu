@@ -14,7 +14,7 @@ namespace MaarifPlatform.Api.Controllers;
 /// ve RAG retrieval'ı.</summary>
 [ApiController]
 [Route("api/reference-documents")]
-[Authorize]
+[Authorize(Policy = "ReferenceDocumentUpload")]
 public class ReferenceDocumentsController(
     MaarifDbContext db,
     IBookFileStorage storage,
@@ -26,7 +26,7 @@ public class ReferenceDocumentsController(
 
     [HttpPost]
     [RequestSizeLimit(MaxFileSizeBytes)]
-    [Authorize(Roles = "Admin,Editor")]
+    [Authorize(Policy = "ReferenceDocumentUpload")]
     public async Task<ActionResult<ReferenceDocumentResponse>> Create(
         [FromForm] CreateReferenceDocumentRequest request, CancellationToken ct)
     {
@@ -95,7 +95,7 @@ public class ReferenceDocumentsController(
     }
 
     [HttpPost("{id:guid}/ingest")]
-    [Authorize(Roles = "Admin,Editor")]
+    [Authorize(Policy = "ReferenceDocumentUpload")]
     public async Task<ActionResult<IngestionResult>> Ingest(Guid id, CancellationToken ct)
     {
         try

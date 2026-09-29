@@ -1,5 +1,6 @@
 @page "/admin/permissions"
 @rendermode InteractiveServer
+@inject MaarifPlatform.Web.Security.OperationGuard Guard
 @attribute [Authorize(Roles = "Admin")]
 @using MaarifPlatform.Domain.Enums
 @using MaarifPlatform.Infrastructure.Auth
@@ -96,6 +97,7 @@ else
 
     private async Task LoadAsync()
     {
+        await Guard.RequireAsync("AdminOnly");
         await using var scope = ScopeFactory.CreateAsyncScope();
         var permissions = scope.ServiceProvider.GetRequiredService<PermissionService>();
         _grants = await permissions.GetGrantedAsync();
@@ -119,6 +121,7 @@ else
 
     private async Task SaveAsync()
     {
+        await Guard.RequireAsync("AdminOnly");
         _saving = true;
         _error = null;
         _message = null;

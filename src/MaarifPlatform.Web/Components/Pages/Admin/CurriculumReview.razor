@@ -1,5 +1,6 @@
 @page "/admin/curriculum-review"
 @rendermode InteractiveServer
+@inject MaarifPlatform.Web.Security.OperationGuard Guard
 @attribute [Authorize(Policy = "CurriculumApproval")]
 @using MaarifPlatform.Domain.Entities
 @using MaarifPlatform.Domain.Enums
@@ -166,6 +167,7 @@ else
 
     private async Task LoadAsync()
     {
+        await Guard.RequireAsync("CurriculumApproval");
         await using var scope = ScopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<MaarifDbContext>();
 
@@ -195,6 +197,7 @@ else
 
     private async Task SetStatusAsync(string entityName, Guid id, ApprovalStatus status)
     {
+        await Guard.RequireAsync("CurriculumApproval");
         _error = null;
         await using var scope = ScopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<MaarifDbContext>();
@@ -235,6 +238,7 @@ else
     /// büyük bir çıkarımı hızlıca gözden geçirip toptan kabul edebilmesi için.</summary>
     private async Task ApproveThemeTreeAsync(Guid themeId)
     {
+        await Guard.RequireAsync("CurriculumApproval");
         _error = null;
         await using var scope = ScopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<MaarifDbContext>();

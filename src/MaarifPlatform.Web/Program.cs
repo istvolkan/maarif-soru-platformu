@@ -12,15 +12,18 @@ using Microsoft.Extensions.Configuration;
 
 var builder = WebApplication.CreateBuilder(args);
 
+if (builder.Environment.IsDevelopment())
+    builder.Configuration.AddJsonFile("appsettings.Development.local.json", optional: true, reloadOnChange: false);
+// Deployment secrets take precedence over local development overrides.
+builder.Configuration.AddEnvironmentVariables();
+
 // Add services to the container.
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 
-// Admin/Books ve Admin/ReferenceDocuments sayfalarındaki InputFile ile büyük PDF'ler (ders
-// kitapları onlarca MB olabilir) yüklenebilsin diye SignalR circuit hub'ının varsayılan 32KB
-// mesaj boyutu sınırı yükseltilir — BooksController.MaxFileSizeBytes (200MB) ile aynı üst sınır.
+// InputFile streams files in chunks; the 200 MB file limit is independent of message size.
 builder.Services.Configure<Microsoft.AspNetCore.SignalR.HubOptions>(options =>
-    options.MaximumReceiveMessageSize = 200 * 1024 * 1024);
+    options.MaximumReceiveMessageSize = 32 * 1024);
 
 // Sprint 11: system_settings tablosundaki değerler appsettings.json'ın ÜZERİNE katman olarak
 // eklenir — bkz. MaarifPlatform.Api/Program.cs'teki aynı blok, ikisi de aynı tabloyu okur/yazar,
@@ -28,15 +31,24 @@ builder.Services.Configure<Microsoft.AspNetCore.SignalR.HubOptions>(options =>
 // başlatma gerekmeden) etkili olur.
 var connStr = builder.Configuration.GetConnectionString("MaarifDb")
     ?? throw new InvalidOperationException("ConnectionStrings:MaarifDb tanımlı değil.");
-var dbSettings = new DatabaseSettingsProvider(connStr);
+var secrets = new SettingsSecretProtector(builder.Configuration["Security:SettingsEncryptionKey"]
+    ?? throw new InvalidOperationException("Security:SettingsEncryptionKey is required; see SECURITY-REVISION.md."));
+using var settingsLoggerFactory = LoggerFactory.Create(logging => logging.AddConsole());
+var dbSettings = new DatabaseSettingsProvider(connStr, secrets, settingsLoggerFactory.CreateLogger<DatabaseSettingsProvider>());
 ((IConfigurationBuilder)builder.Configuration).Add(new DatabaseSettingsSource(dbSettings));
 builder.Services.AddSingleton(dbSettings);
+builder.Services.AddSingleton(secrets);
+builder.Services.AddSingleton<ISettingsReloader>(dbSettings);
+builder.Services.AddHostedService<SettingsRefreshService>();
 
 builder.Services.AddMaarifPlatformCore(builder.Configuration);
 
 // Bu proje JWT bearer katmanına hiç dokunmaz — kendi cookie auth şeması var, ama parola
-// doğrulaması aynı AuthService.LoginAsync'i kullanır (bkz. Login.razor).
+// doğrulaması ortak AuthService.ValidateCredentialsAsync'i kullanır.
 builder.Services.AddCascadingAuthenticationState();
+builder.Services.AddScoped<Microsoft.AspNetCore.Components.Authorization.AuthenticationStateProvider,
+    MaarifPlatform.Web.Security.RevalidatingSessionProvider>();
+builder.Services.AddScoped<MaarifPlatform.Web.Security.OperationGuard>();
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>
     {
@@ -44,19 +56,22 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
         options.AccessDeniedPath = "/erisim-engellendi";
         options.ExpireTimeSpan = TimeSpan.FromHours(8);
         options.SlidingExpiration = true;
+        options.Events.OnValidatePrincipal = async context =>
+        {
+            if (!await context.HttpContext.RequestServices.GetRequiredService<SessionValidator>()
+                    .IsValidAsync(context.Principal!, context.HttpContext.RequestAborted))
+            {
+                context.RejectPrincipal();
+                await context.HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+            }
+        };
     });
 // §18 Rol bazlı yetki matrisi — her Permission için, adı Permission.ToString() ile aynı bir
 // policy tanımlanır; gerçek "bu rol bu yetkiye sahip mi" kontrolü PermissionAuthorizationHandler'da
 // (Infrastructure/Auth) role_permissions tablosuna bakarak yapılır, [Authorize(Roles=...)]'daki
 // gibi derleme zamanında sabitlenmez — Admin/Kullanıcılar > Yetkiler ekranından değiştirilebilir.
-builder.Services.AddAuthorization(options =>
-{
-    foreach (var permission in Enum.GetValues<MaarifPlatform.Domain.Enums.Permission>())
-    {
-        options.AddPolicy(permission.ToString(), policy =>
-            policy.Requirements.Add(new MaarifPlatform.Infrastructure.Auth.PermissionRequirement(permission)));
-    }
-});
+builder.Services.AddAuthorization(AuthorizationPolicies.Configure);
+builder.Services.AddLoginRateLimiting();
 
 var app = builder.Build();
 
@@ -72,6 +87,7 @@ app.UseHttpsRedirection();
 app.UseStaticFiles();
 
 app.UseAuthentication();
+app.UseRateLimiter();
 app.UseAuthorization();
 
 app.UseAntiforgery();
@@ -100,7 +116,7 @@ app.MapGet("/export/book/{bookId:guid}/pdf", async (Guid bookId, BookPdfExportSe
     var pdfBytes = await exportService.GenerateAsync(bookId, ct);
     var fileName = $"{book.Title}-donusturulmus.pdf".Replace(' ', '-');
     return Results.File(pdfBytes, "application/pdf", fileName);
-}).RequireAuthorization();
+}).RequireAuthorization("QuestionPoolAccess");
 
 // Maarif Uyum Puanı 50 altında kalıp otomatik Transform'a gönderilmeyen sorular için ayrı
 // revizyon raporu (bkz. BookBatchTransformService.ProcessManualReviewAsync).
@@ -115,7 +131,7 @@ app.MapGet("/export/book/{bookId:guid}/revision-pdf", async (Guid bookId, BookPd
     var pdfBytes = await exportService.GenerateRevisionReportAsync(bookId, ct);
     var fileName = $"{book.Title}-revizyon-raporu.pdf".Replace(' ', '-');
     return Results.File(pdfBytes, "application/pdf", fileName);
-}).RequireAuthorization();
+}).RequireAuthorization("QuestionPoolAccess");
 
 // Soru için PDF'ten çıkarılmış görsel (grafik/şekil sayfası) — QuestionDetail.razor'daki <img>
 // buraya işaret eder. Görsel yoksa (RequiresVisual=false ya da hiç render edilmemişse) 404.
@@ -134,7 +150,7 @@ app.MapGet("/media/question/{questionId:guid}/visual", async (Guid questionId, M
     // ContentType Faz 1 öncesi kayıtlarda null'dır (o dönemde tek tür vardı: PDF-crop PNG'si) —
     // Faz 2'nin SVG'leri her zaman ContentType="image/svg+xml" ile kaydedilir.
     return Results.File(stream, asset.ContentType ?? "image/png");
-}).RequireAuthorization();
+}).RequireAuthorization("QuestionPoolAccess");
 
 using (var scope = app.Services.CreateScope())
 {

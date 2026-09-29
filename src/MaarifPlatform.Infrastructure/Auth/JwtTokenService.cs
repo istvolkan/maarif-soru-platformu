@@ -21,6 +21,7 @@ public class JwtTokenService(IOptions<JwtOptions> options) : IJwtTokenService
         var claims = new[]
         {
             new Claim(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
+            new Claim(SessionValidator.StampClaim, user.SecurityStamp),
             new Claim(ClaimTypes.Email, user.Email),
             new Claim(ClaimTypes.Role, user.Role.ToString())
         };

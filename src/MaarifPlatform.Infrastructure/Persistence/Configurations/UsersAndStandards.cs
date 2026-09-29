@@ -15,6 +15,9 @@ public class AppUserConfiguration : IEntityTypeConfiguration<AppUser>
         b.HasIndex(e => e.Email).IsUnique();
         b.Property(e => e.Role).HasConversion<string>().HasMaxLength(30);
         b.Property(e => e.PasswordHash).HasMaxLength(500).IsRequired();
+        b.Property(e => e.SecurityStamp).HasMaxLength(32).IsRequired().IsConcurrencyToken();
+        b.Property(e => e.FailedLoginCount).IsConcurrencyToken();
+        b.Property(e => e.LockoutEnd).IsConcurrencyToken();
     }
 }
 

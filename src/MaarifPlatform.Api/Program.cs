@@ -9,6 +9,10 @@ using Microsoft.IdentityModel.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
 
+if (builder.Environment.IsDevelopment())
+    builder.Configuration.AddJsonFile("appsettings.Development.local.json", optional: true, reloadOnChange: false);
+builder.Configuration.AddEnvironmentVariables();
+
 // Add services to the container.
 
 builder.Services.AddControllers();
@@ -22,9 +26,15 @@ builder.Services.AddSwaggerGen();
 // etkili olur, çünkü ikisi aynı system_settings tablosunu okur/yazar.
 var connStr = builder.Configuration.GetConnectionString("MaarifDb")
     ?? throw new InvalidOperationException("ConnectionStrings:MaarifDb tanımlı değil.");
-var dbSettings = new DatabaseSettingsProvider(connStr);
+var secrets = new SettingsSecretProtector(builder.Configuration["Security:SettingsEncryptionKey"]
+    ?? throw new InvalidOperationException("Security:SettingsEncryptionKey is required; see SECURITY-REVISION.md."));
+using var settingsLoggerFactory = LoggerFactory.Create(logging => logging.AddConsole());
+var dbSettings = new DatabaseSettingsProvider(connStr, secrets, settingsLoggerFactory.CreateLogger<DatabaseSettingsProvider>());
 ((IConfigurationBuilder)builder.Configuration).Add(new DatabaseSettingsSource(dbSettings));
 builder.Services.AddSingleton(dbSettings);
+builder.Services.AddSingleton(secrets);
+builder.Services.AddSingleton<ISettingsReloader>(dbSettings);
+builder.Services.AddHostedService<SettingsRefreshService>();
 
 builder.Services.AddMaarifPlatformCore(builder.Configuration);
 
@@ -33,14 +43,27 @@ var jwt = builder.Configuration.GetSection("Auth:Jwt").Get<JwtOptions>()
     ?? throw new InvalidOperationException("Auth:Jwt tanımlı değil.");
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddJwtBearer(o => o.TokenValidationParameters = new TokenValidationParameters
+    .AddJwtBearer(o =>
     {
-        ValidIssuer = jwt.Issuer,
-        ValidAudience = jwt.Audience,
-        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwt.SigningKey)),
-        ClockSkew = TimeSpan.FromMinutes(1)
+        o.Events = new JwtBearerEvents
+        {
+            OnTokenValidated = async context =>
+            {
+                if (!await context.HttpContext.RequestServices.GetRequiredService<SessionValidator>()
+                    .IsValidAsync(context.Principal!, context.HttpContext.RequestAborted))
+                    context.Fail("Session revoked.");
+            }
+        };
+        o.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidIssuer = jwt.Issuer,
+            ValidAudience = jwt.Audience,
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwt.SigningKey)),
+            ClockSkew = TimeSpan.FromMinutes(1)
+        };
     });
-builder.Services.AddAuthorization();
+builder.Services.AddAuthorization(AuthorizationPolicies.Configure);
+builder.Services.AddLoginRateLimiting();
 
 var app = builder.Build();
 
@@ -54,6 +77,7 @@ if (app.Environment.IsDevelopment())
 app.UseHttpsRedirection();
 
 app.UseAuthentication();
+app.UseRateLimiter();
 app.UseAuthorization();
 
 app.MapControllers();

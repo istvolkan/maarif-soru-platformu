@@ -16,7 +16,7 @@ namespace MaarifPlatform.Api.Controllers;
 /// ilk API yüzeyi.</summary>
 [ApiController]
 [Route("api/books")]
-[Authorize]
+[Authorize(Policy = "QuestionPoolAccess")]
 public class BooksController(
     MaarifDbContext db,
     IBookFileStorage storage,
@@ -30,7 +30,7 @@ public class BooksController(
 
     [HttpPost]
     [RequestSizeLimit(MaxFileSizeBytes)]
-    [Authorize(Roles = "Admin,Editor")]
+    [Authorize(Roles = "Admin")]
     public async Task<ActionResult<BookResponse>> Create([FromForm] CreateBookRequest request, CancellationToken ct)
     {
         if (request.File.Length == 0)
@@ -78,7 +78,7 @@ public class BooksController(
     }
 
     [HttpPost("{id:guid}/extract")]
-    [Authorize(Roles = "Admin,Editor")]
+    [Authorize(Policy = "AdminOnly")]
     public async Task<ActionResult<BookExtractionResult>> Extract(Guid id, CancellationToken ct)
     {
         try
@@ -147,7 +147,7 @@ public class BooksController(
     }
 
     [HttpPost("{id:guid}/analyze-all")]
-    [Authorize(Roles = "Admin,Editor")]
+    [Authorize(Policy = "QuestionEdit")]
     public async Task<ActionResult<BatchTransformResponse>> AnalyzeAll(Guid id, CancellationToken ct)
     {
         var bookExists = await db.Books.AnyAsync(b => b.Id == id, ct);
@@ -160,7 +160,7 @@ public class BooksController(
     }
 
     [HttpPost("{id:guid}/transform-all")]
-    [Authorize(Roles = "Admin,Editor")]
+    [Authorize(Policy = "QuestionEdit")]
     public async Task<ActionResult<BatchTransformResponse>> TransformAll(Guid id, CancellationToken ct)
     {
         var bookExists = await db.Books.AnyAsync(b => b.Id == id, ct);

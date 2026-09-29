@@ -1,5 +1,6 @@
 @page "/admin/reference-documents"
 @rendermode InteractiveServer
+@inject MaarifPlatform.Web.Security.OperationGuard Guard
 @attribute [Authorize(Policy = "ReferenceDocumentUpload")]
 @using System.Security.Cryptography
 @using MaarifPlatform.Application.Storage
@@ -160,6 +161,7 @@ else
 
     private async Task LoadAsync()
     {
+        await Guard.RequireAsync("ReferenceDocumentUpload");
         await using var scope = ScopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<MaarifDbContext>();
 
@@ -175,6 +177,7 @@ else
 
     private async Task UploadAsync()
     {
+        await Guard.RequireAsync("ReferenceDocumentUpload");
         if (_selectedFile is null)
         {
             return;
@@ -250,6 +253,7 @@ else
 
     private async Task IngestAsync(Guid documentId)
     {
+        await Guard.RequireAsync("ReferenceDocumentUpload");
         _error = null;
         await using var scope = ScopeFactory.CreateAsyncScope();
         var ingestionService = scope.ServiceProvider.GetRequiredService<ReferenceIngestionService>();
@@ -268,6 +272,7 @@ else
 
     private async Task ExtractCurriculumAsync(Guid documentId)
     {
+        await Guard.RequireAsync("ReferenceDocumentUpload");
         _error = null;
         _extractionInfo = null;
         _extractingId = documentId;
@@ -296,6 +301,7 @@ else
 
     private async Task DeleteDocumentAsync(Guid documentId)
     {
+        await Guard.RequireAsync("ReferenceDocumentUpload");
         _error = null;
         _extractionInfo = null;
         _deletingId = documentId;

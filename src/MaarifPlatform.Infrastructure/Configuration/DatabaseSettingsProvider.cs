@@ -1,46 +1,65 @@
-using Microsoft.Extensions.Configuration;
+﻿using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using Npgsql;
 
 namespace MaarifPlatform.Infrastructure.Configuration;
 
-/// <summary>Sprint 11 — `system_settings` tablosundaki satırları appsettings.json'ın ÜSTÜNE
-/// katman olarak ekler (DB değeri varsa kazanır, yoksa appsettings.json fallback kalır). Ham
-/// Npgsql ile konuşur, EF/DI ÜZERİNDEN DEĞİL — IConfiguration kaynakları DI konteyneri henüz
-/// kurulmadan inşa edildiği için (chicken-and-egg). İlk açılışta migration henüz çalışmamış
-/// olabilir; bu durumda sessizce boş veriye düşer (appsettings.json geçerli kalır).</summary>
-public sealed class DatabaseSettingsProvider(string connectionString) : ConfigurationProvider
+public interface ISettingsReloader
 {
+    void SignalReload();
+}
+
+public sealed class DatabaseSettingsProvider(string connectionString, SettingsSecretProtector secrets,
+    ILogger<DatabaseSettingsProvider> logger) : ConfigurationProvider, ISettingsReloader
+{
+    private readonly object _gate = new();
+    private bool _loaded;
+
     public override void Load()
     {
-        try
+        lock (_gate)
         {
+            var data = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
             using var conn = new NpgsqlConnection(connectionString);
             conn.Open();
-            using var cmd = new NpgsqlCommand("SELECT \"Key\", \"Value\" FROM system_settings", conn);
-            using var reader = cmd.ExecuteReader();
-
-            var data = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
-            while (reader.Read())
+            try
             {
-                data[reader.GetString(0)] = reader.GetString(1);
+                using var cmd = new NpgsqlCommand("SELECT \"Key\", \"Value\" FROM system_settings", conn);
+                using var reader = cmd.ExecuteReader();
+                while (reader.Read()) data[reader.GetString(0)] = reader.GetString(1);
+            }
+            catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UndefinedTable && !_loaded)
+            {
+                logger.LogWarning("system_settings is not created yet; apply database migrations.");
+                return;
             }
 
+            // Upgrade legacy plaintext secrets atomically. A concurrent setting edit wins.
+            using var transaction = conn.BeginTransaction();
+            foreach (var key in data.Keys.ToArray())
+            {
+                if (!SettingsSecretProtector.IsSecret(key)) continue;
+                var value = data[key]!;
+                if (SettingsSecretProtector.IsProtected(value))
+                {
+                    data[key] = secrets.Unprotect(key, value);
+                    continue;
+                }
+                using var update = new NpgsqlCommand("UPDATE system_settings SET \"Value\" = @encrypted WHERE \"Key\" = @key AND \"Value\" = @old", conn, transaction);
+                update.Parameters.AddWithValue("encrypted", secrets.Protect(key, value));
+                update.Parameters.AddWithValue("key", key);
+                update.Parameters.AddWithValue("old", value);
+                update.ExecuteNonQuery();
+            }
+            transaction.Commit();
+            var changed = data.Count != Data.Count || data.Any(pair => !Data.TryGetValue(pair.Key, out var old) || old != pair.Value);
             Data = data;
-        }
-        catch (Exception)
-        {
-            Data = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+            _loaded = true;
+            if (changed) OnReload();
         }
     }
 
-    /// <summary>Bir ayar kaydedildikten sonra çağrılır — Load()'u yeniden çalıştırır ve
-    /// OnReload() ile IConfiguration'ın change token'ını tetikler. IOptionsMonitor&lt;T&gt;
-    /// zaten bu mekanizmayı dinliyor, ek bir kablo bağlamaya gerek yok.</summary>
-    public void SignalReload()
-    {
-        Load();
-        OnReload();
-    }
+    public void SignalReload() => Load();
 }
 
 public sealed class DatabaseSettingsSource(DatabaseSettingsProvider provider) : IConfigurationSource

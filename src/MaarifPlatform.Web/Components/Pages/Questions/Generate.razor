@@ -1,5 +1,6 @@
 @page "/questions/generate"
 @rendermode InteractiveServer
+@inject MaarifPlatform.Web.Security.OperationGuard Guard
 @attribute [Authorize(Policy = "QuestionGenerationAccess")]
 @using MaarifPlatform.Application.Providers
 @using MaarifPlatform.Domain.Enums
@@ -329,6 +330,7 @@
 
     protected override async Task OnInitializedAsync()
     {
+        await Guard.RequireAsync("QuestionGenerationAccess");
         await using var scope = ScopeFactory.CreateAsyncScope();
         var routing = scope.ServiceProvider.GetRequiredService<IOptionsMonitor<GenerationRoutingOptions>>();
 
@@ -351,6 +353,7 @@
 
     private async Task OnSubjectChangedAsync()
     {
+        await Guard.RequireAsync("QuestionGenerationAccess");
         _themeId = null; _learningOutcomeId = null; _selectedLearningOutcome = null;
         _themes = new(); _learningOutcomes = new(); _contentFrameworks = new(); _fieldSkills = new();
 
@@ -373,6 +376,7 @@
 
     private async Task OnThemeChangedAsync()
     {
+        await Guard.RequireAsync("QuestionGenerationAccess");
         _learningOutcomeId = null; _selectedLearningOutcome = null;
         _learningOutcomes = new(); _contentFrameworks = new();
 
@@ -388,6 +392,7 @@
 
     private async Task OnLearningOutcomeChangedAsync()
     {
+        await Guard.RequireAsync("QuestionGenerationAccess");
         _contentFrameworks = new();
         _selectedLearningOutcome = _learningOutcomes.FirstOrDefault(lo => lo.Id == _learningOutcomeId);
 
@@ -415,6 +420,7 @@
 
     private async Task GenerateAsync()
     {
+        await Guard.RequireAsync("QuestionGenerationAccess");
         _running = true;
         _error = null;
         _finalSummary = null;

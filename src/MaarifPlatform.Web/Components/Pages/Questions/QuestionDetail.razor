@@ -1,6 +1,7 @@
 @page "/questions/{Id:guid}"
 @rendermode InteractiveServer
-@attribute [Authorize]
+@inject MaarifPlatform.Web.Security.OperationGuard Guard
+@attribute [Authorize(Policy = "QuestionPoolAccess")]
 @using System.Text.Json
 @using MaarifPlatform.Domain.Enums
 @using MaarifPlatform.Infrastructure.Analysis
@@ -166,6 +167,7 @@ else
 
     private async Task LoadAsync()
     {
+        await Guard.RequireAsync("QuestionPoolAccess");
         _loading = true;
         await using var scope = ScopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<MaarifDbContext>();
@@ -237,6 +239,7 @@ else
 
     private async Task AnalyzeAsync()
     {
+        await Guard.RequireAsync("QuestionEdit");
         _busy = true;
         _error = null;
         _message = null;
@@ -266,6 +269,7 @@ else
 
     private async Task ReviewAsync(bool approve)
     {
+        await Guard.RequireAsync("QuestionEdit");
         _busy = true;
         _error = null;
         _message = null;
@@ -291,6 +295,7 @@ else
 
     private async Task TransformAsync()
     {
+        await Guard.RequireAsync("QuestionEdit");
         _busy = true;
         _error = null;
         _message = null;

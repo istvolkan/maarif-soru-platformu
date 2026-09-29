@@ -1,6 +1,7 @@
 @page "/questions/book/{BookId:guid}"
 @rendermode InteractiveServer
-@attribute [Authorize]
+@inject MaarifPlatform.Web.Security.OperationGuard Guard
+@attribute [Authorize(Policy = "QuestionPoolAccess")]
 @using MaarifPlatform.Infrastructure.Analysis
 @using MaarifPlatform.Infrastructure.Persistence
 @using Microsoft.EntityFrameworkCore
@@ -146,6 +147,7 @@ else
 
     private async Task LoadAsync()
     {
+        await Guard.RequireAsync("QuestionPoolAccess");
         await using var scope = ScopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<MaarifDbContext>();
 
@@ -166,6 +168,7 @@ else
 
     private async Task RunBatchAsync(bool runTransform)
     {
+        await Guard.RequireAsync("QuestionEdit");
         _batchRunning = true;
         _batchIsTransform = runTransform;
         _batchDone = false;
@@ -207,6 +210,7 @@ else
 
     private async Task RunReviewBatchAsync()
     {
+        await Guard.RequireAsync("QuestionEdit");
         _reviewRunning = true;
         _reviewDone = false;
         _reviewTotal = _questions?.Count(q => q.Status == "ManualReviewRequired") ?? 0;
