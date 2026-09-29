@@ -34,6 +34,7 @@
             <InputSelect @bind-Value="_form.AiProvider">
                 <option value="Local">Local (mock, anahtar gerektirmez)</option>
                 <option value="Anthropic">Anthropic</option>
+                <option value="ClaudeCli">Claude CLI (yerel oturum, API anahtarı gerektirmez)</option>
             </InputSelect>
         </div>
         <div class="field"><label>Anthropic API Key @KeyStatus(_hasAnthropicKey)</label><InputText @bind-Value="_form.AnthropicApiKey" type="password" placeholder="değiştirmek için doldurun" /></div>
@@ -56,6 +57,42 @@
             }
         </div>
         <div class="field"><label>Anthropic Max Tokens</label><InputNumber @bind-Value="_form.AnthropicMaxTokens" /></div>
+
+        <h4 class="subsection">Claude CLI</h4>
+        <p class="note">
+            Anthropic ile aynı prompt'ları, sunucuda kurulu <code>claude</code> CLI üzerinden çalıştırır; CLI'ın
+            oturum açtığı hesabı kullanır. Yalnızca geliştirme/deneme içindir — birden çok kullanıcıya hizmet
+            veren ortamlarda API anahtarlı Anthropic sağlayıcısını kullanın.
+        </p>
+        <div class="field">
+            <label>Claude CLI Yolu</label>
+            <div class="model-field">
+                <InputText @bind-Value="_form.ClaudeCliExecutablePath" placeholder="claude" />
+                <button type="button" class="secondary" disabled="@_testingClaudeCli" @onclick="TestClaudeCliAsync">@(_testingClaudeCli ? "Deneniyor…" : "CLI'ı Test Et")</button>
+            </div>
+            @if (_claudeCliTestResult is not null)
+            {
+                <p class="ok model-field-error">@_claudeCliTestResult</p>
+            }
+            @if (_claudeCliTestError is not null)
+            {
+                <p class="error model-field-error">@_claudeCliTestError</p>
+            }
+        </div>
+        <div class="field">
+            <label>Claude CLI Model</label>
+            <div class="model-field">
+                <InputText @bind-Value="_form.ClaudeCliModel" placeholder="boş — CLI varsayılanı" />
+                <select @onchange="e => _form.ClaudeCliModel = e.Value?.ToString() ?? _form.ClaudeCliModel">
+                    <option value="">— listeden seç —</option>
+                    @foreach (var alias in _claudeCliModelAliases)
+                    {
+                        <option value="@alias" selected="@(alias == _form.ClaudeCliModel)">@alias</option>
+                    }
+                </select>
+            </div>
+        </div>
+        <div class="field"><label>Claude CLI Zaman Aşımı (saniye)</label><InputNumber @bind-Value="_form.ClaudeCliTimeoutSeconds" /></div>
     </fieldset>
 
     <fieldset>
@@ -66,6 +103,7 @@
                 <option value="">(boş — consensus devre dışı)</option>
                 <option value="OpenAI">OpenAI</option>
                 <option value="Anthropic">Anthropic</option>
+                <option value="ClaudeCli">Claude CLI</option>
             </InputSelect>
         </div>
         <div class="field"><label>OpenAI API Key @KeyStatus(_hasOpenAiKey)</label><InputText @bind-Value="_form.OpenAiApiKey" type="password" placeholder="değiştirmek için doldurun" /></div>
@@ -159,6 +197,7 @@
                 <option value="">(boş — Generator'ın kendisi denetler)</option>
                 <option value="Local">Local (mock, anahtar gerektirmez)</option>
                 <option value="Anthropic">Anthropic</option>
+                <option value="ClaudeCli">Claude CLI</option>
             </InputSelect>
         </div>
         <div class="field"><label>Maks. Yeniden Üretim Denemesi</label><InputNumber @bind-Value="_form.GenerationMaxRegenerationAttempts" /></div>
@@ -173,7 +212,7 @@
             Her hücre boş bırakılırsa ("— varsayılan —") o aşama için yukarıdaki genel ayar
             (Ai Birincil Sağlayıcı / Curriculum Validator Sağlayıcı / Judge) kullanılır. Listeler,
             yukarıdaki ilgili "Modelleri Getir" butonlarıyla doldurulan gerçek Anthropic/OpenAI
-            model kataloğundan gelir — önce onları doldurun.
+            model kataloğundan gelir — önce onları doldurun. Claude CLI seçenekleri her zaman listelenir.
         </p>
         <div class="routing-matrix-wrap">
             <table class="routing-matrix">
@@ -216,6 +255,12 @@
                                                 }
                                             </optgroup>
                                         }
+                                        <optgroup label="Claude CLI">
+                                            @foreach (var alias in _claudeCliModelAliases)
+                                            {
+                                                <option value="ClaudeCli:@alias">@alias</option>
+                                            }
+                                        </optgroup>
                                     </select>
                                 </td>
                             }
@@ -310,6 +355,11 @@
     }
 
     .routing-matrix select { width: 100%; max-width: 220px; }
+
+    .subsection {
+        margin: 1.25rem 0 0.25rem;
+        font-size: 0.95rem;
+    }
 </style>
 
 @code {
@@ -326,6 +376,12 @@
     [
         ("VeryEasy", "Çok Kolay"), ("Easy", "Kolay"), ("Medium", "Orta"), ("Hard", "Zor"), ("VeryHard", "İleri Düzey")
     ];
+
+    // CLI'ın --model'de kabul ettiği takma adlar; her zaman en güncel sürüme çözülür. Tam model
+    // adı da serbest metin alanına yazılabilir.
+    private static readonly string[] _claudeCliModelAliases = ["opus", "sonnet", "haiku"];
+    private bool _testingClaudeCli;
+    private string? _claudeCliTestResult, _claudeCliTestError;
 
     private static string StageLabel(string stage) => stage switch
     {
@@ -349,6 +405,9 @@
         _form.AnthropicModel = Configuration["Ai:Anthropic:Model"] ?? "claude-opus-4-8";
         _form.AnthropicMaxTokens = Configuration.GetValue<int?>("Ai:Anthropic:MaxTokens") ?? 4096;
         _hasAnthropicKey = !string.IsNullOrWhiteSpace(Configuration["Ai:Anthropic:ApiKey"]);
+        _form.ClaudeCliExecutablePath = Configuration["Ai:ClaudeCli:ExecutablePath"] ?? "claude";
+        _form.ClaudeCliModel = Configuration["Ai:ClaudeCli:Model"] ?? "opus";
+        _form.ClaudeCliTimeoutSeconds = Configuration.GetValue<int?>("Ai:ClaudeCli:TimeoutSeconds") ?? 300;
 
         _form.JudgeSecondaryProvider = Configuration["Judge:SecondaryProvider"] ?? "";
         _form.OpenAiModel = Configuration["Judge:OpenAI:Model"] ?? "gpt-4o";
@@ -408,6 +467,26 @@
         finally
         {
             _loadingAnthropicModels = false;
+        }
+    }
+
+    private async Task TestClaudeCliAsync()
+    {
+        await Guard.RequireAsync("AdminOnly");
+        _testingClaudeCli = true;
+        _claudeCliTestResult = _claudeCliTestError = null;
+        try
+        {
+            var version = await ClaudeCliLLMProvider.GetVersionAsync(_form.ClaudeCliExecutablePath ?? "claude");
+            _claudeCliTestResult = $"CLI bulundu: {version}";
+        }
+        catch (Exception ex)
+        {
+            _claudeCliTestError = ex.Message;
+        }
+        finally
+        {
+            _testingClaudeCli = false;
         }
     }
 
@@ -522,6 +601,9 @@
             Set("Ai:Anthropic:Model", _form.AnthropicModel);
             Set("Ai:Anthropic:MaxTokens", _form.AnthropicMaxTokens?.ToString());
             if (!string.IsNullOrWhiteSpace(_form.AnthropicApiKey)) Set("Ai:Anthropic:ApiKey", _form.AnthropicApiKey);
+            Set("Ai:ClaudeCli:ExecutablePath", _form.ClaudeCliExecutablePath);
+            Set("Ai:ClaudeCli:Model", _form.ClaudeCliModel ?? "");
+            Set("Ai:ClaudeCli:TimeoutSeconds", _form.ClaudeCliTimeoutSeconds?.ToString());
 
             Set("Judge:SecondaryProvider", _form.JudgeSecondaryProvider);
             Set("Judge:OpenAI:Model", _form.OpenAiModel);
@@ -573,6 +655,9 @@
         public string? AnthropicApiKey { get; set; }
         public string? AnthropicModel { get; set; }
         public int? AnthropicMaxTokens { get; set; }
+        public string? ClaudeCliExecutablePath { get; set; }
+        public string? ClaudeCliModel { get; set; }
+        public int? ClaudeCliTimeoutSeconds { get; set; }
 
         public string JudgeSecondaryProvider { get; set; } = "";
         public string? OpenAiApiKey { get; set; }

@@ -9,6 +9,7 @@ public class LLMProviderFactory(IServiceProvider serviceProvider) : ILLMProvider
     {
         "anthropic" => serviceProvider.GetRequiredService<AnthropicLLMProvider>(),
         "openai" => serviceProvider.GetRequiredService<OpenAiLLMProvider>(),
+        "claudecli" => serviceProvider.GetRequiredService<ClaudeCliLLMProvider>(),
         _ => serviceProvider.GetRequiredService<LocalHeuristicLLMProvider>()
     };
 }
