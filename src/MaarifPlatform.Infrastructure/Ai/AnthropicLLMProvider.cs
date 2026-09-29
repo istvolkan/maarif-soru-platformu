@@ -35,7 +35,7 @@ public class AnthropicLLMProvider : ILLMProvider
         _optionsMonitor = optionsMonitor;
     }
 
-    public string Name => "anthropic";
+    public virtual string Name => "anthropic";
 
     /// <summary>Sprint 11: IOptionsMonitor.CurrentValue her çağrıda taze okunur — Admin Ayarlar
     /// ekranından değiştirilen Ai:Anthropic:ApiKey/Model yeniden başlatma gerektirmeden etkili
@@ -61,17 +61,26 @@ public class AnthropicLLMProvider : ILLMProvider
         return (options, _client);
     }
 
-    public async Task<AnalyzeQuestionResult> AnalyzeQuestionAsync(AnalyzeQuestionRequest request, CancellationToken ct = default)
+    /// <summary>Tek bir zorunlu-tool çağrısının taşıma bağımsız tarifi: system prompt, araç şeması,
+    /// kullanıcı mesajı ve (§16 zorluk bazlı yönlendirmeden gelen) isteğe bağlı model.</summary>
+    protected sealed record ToolInvocation(string System, Tool Tool, string UserContent, string? ModelOverride = null);
+
+    /// <summary>Prompt/şema/ayrıştırma mantığı bu sınıfta kalır; yalnızca modele ulaşma yolu bu
+    /// metotta toplanır. ClaudeCliLLMProvider aynı prompt'ları Messages API yerine yerel
+    /// `claude` CLI üzerinden çalıştırmak için bu metodu ezer.</summary>
+    protected virtual async Task<(IReadOnlyDictionary<string, JsonElement> Input, AiUsage Usage)> InvokeToolAsync(
+        ToolInvocation call, CancellationToken ct)
     {
         var (options, client) = Current();
+        var model = call.ModelOverride ?? options.Model;
         var parameters = new MessageCreateParams
         {
-            Model = options.Model,
+            Model = model,
             MaxTokens = options.MaxTokens,
-            System = BuildSystemPrompt(request),
-            Tools = [BuildAnalysisTool()],
-            ToolChoice = new ToolChoiceTool { Name = ToolName },
-            Messages = [new() { Role = Role.User, Content = BuildUserContent(request) }],
+            System = call.System,
+            Tools = [call.Tool],
+            ToolChoice = new ToolChoiceTool { Name = call.Tool.Name },
+            Messages = [new() { Role = Role.User, Content = call.UserContent }],
             CacheControl = new CacheControlEphemeral(),
         };
 
@@ -82,154 +91,54 @@ public class AnthropicLLMProvider : ILLMProvider
         var toolUse = response.Content
             .Select(b => b.Value)
             .OfType<ToolUseBlock>()
-            .FirstOrDefault(b => b.Name == ToolName)
-            ?? throw new InvalidOperationException("Anthropic yanıtında beklenen submit_analysis tool_use bloğu bulunamadı.");
+            .FirstOrDefault(b => b.Name == call.Tool.Name)
+            ?? throw new InvalidOperationException($"Anthropic yanıtında beklenen {call.Tool.Name} tool_use bloğu bulunamadı.");
 
-        var usage = BuildUsage(response, stopwatch, options);
-        return ParseResult(toolUse.Input, usage);
+        return (toolUse.Input, BuildUsage(response, stopwatch, options, model));
+    }
+
+    public async Task<AnalyzeQuestionResult> AnalyzeQuestionAsync(AnalyzeQuestionRequest request, CancellationToken ct = default)
+    {
+        var (input, usage) = await InvokeToolAsync(
+            new(BuildSystemPrompt(request), BuildAnalysisTool(), BuildUserContent(request)), ct);
+        return ParseResult(input, usage);
     }
 
     public async Task<TransformQuestionResult> TransformQuestionAsync(TransformQuestionRequest request, CancellationToken ct = default)
     {
-        var (options, client) = Current();
-        var parameters = new MessageCreateParams
-        {
-            Model = options.Model,
-            MaxTokens = options.MaxTokens,
-            System = BuildTransformSystemPrompt(request),
-            Tools = [BuildTransformationTool()],
-            ToolChoice = new ToolChoiceTool { Name = TransformToolName },
-            Messages = [new() { Role = Role.User, Content = request.OriginalQuestion }],
-            CacheControl = new CacheControlEphemeral(),
-        };
-
-        var stopwatch = Stopwatch.StartNew();
-        var response = await client.Messages.Create(parameters, ct);
-        stopwatch.Stop();
-
-        var toolUse = response.Content
-            .Select(b => b.Value)
-            .OfType<ToolUseBlock>()
-            .FirstOrDefault(b => b.Name == TransformToolName)
-            ?? throw new InvalidOperationException("Anthropic yanıtında beklenen submit_transformation tool_use bloğu bulunamadı.");
-
-        var usage = BuildUsage(response, stopwatch, options);
-        return ParseTransformResult(toolUse.Input, usage);
+        var (input, usage) = await InvokeToolAsync(
+            new(BuildTransformSystemPrompt(request), BuildTransformationTool(), request.OriginalQuestion), ct);
+        return ParseTransformResult(input, usage);
     }
 
     public async Task<EvaluateQuestionResult> EvaluateQuestionAsync(EvaluateQuestionRequest request, CancellationToken ct = default)
     {
-        var (options, client) = Current();
-        var model = request.ModelOverride ?? options.Model;
-        var parameters = new MessageCreateParams
-        {
-            Model = model,
-            MaxTokens = options.MaxTokens,
-            System = BuildEvaluateSystemPrompt(request),
-            Tools = [BuildEvaluationTool()],
-            ToolChoice = new ToolChoiceTool { Name = EvaluateToolName },
-            Messages = [new() { Role = Role.User, Content = BuildEvaluateUserContent(request) }],
-            CacheControl = new CacheControlEphemeral(),
-        };
-
-        var stopwatch = Stopwatch.StartNew();
-        var response = await client.Messages.Create(parameters, ct);
-        stopwatch.Stop();
-
-        var toolUse = response.Content
-            .Select(b => b.Value)
-            .OfType<ToolUseBlock>()
-            .FirstOrDefault(b => b.Name == EvaluateToolName)
-            ?? throw new InvalidOperationException("Anthropic yanıtında beklenen submit_evaluation tool_use bloğu bulunamadı.");
-
-        var usage = BuildUsage(response, stopwatch, options, model);
-        return ParseEvaluateResult(toolUse.Input, usage);
+        var (input, usage) = await InvokeToolAsync(
+            new(BuildEvaluateSystemPrompt(request), BuildEvaluationTool(), BuildEvaluateUserContent(request), request.ModelOverride), ct);
+        return ParseEvaluateResult(input, usage);
     }
 
     public async Task<GenerateQuestionResult> GenerateQuestionAsync(GenerateQuestionRequest request, CancellationToken ct = default)
     {
-        var (options, client) = Current();
-        var model = request.ModelOverride ?? options.Model;
-        var parameters = new MessageCreateParams
-        {
-            Model = model,
-            MaxTokens = options.MaxTokens,
-            System = BuildGenerateSystemPrompt(request),
-            Tools = [BuildGenerationTool()],
-            ToolChoice = new ToolChoiceTool { Name = GenerateToolName },
-            Messages = [new() { Role = Role.User, Content = BuildGenerateUserContent(request) }],
-            CacheControl = new CacheControlEphemeral(),
-        };
-
-        var stopwatch = Stopwatch.StartNew();
-        var response = await client.Messages.Create(parameters, ct);
-        stopwatch.Stop();
-
-        var toolUse = response.Content
-            .Select(b => b.Value)
-            .OfType<ToolUseBlock>()
-            .FirstOrDefault(b => b.Name == GenerateToolName)
-            ?? throw new InvalidOperationException("Anthropic yanıtında beklenen submit_generation tool_use bloğu bulunamadı.");
-
-        var usage = BuildUsage(response, stopwatch, options, model);
-        return ParseGenerateResult(toolUse.Input, usage);
+        var (input, usage) = await InvokeToolAsync(
+            new(BuildGenerateSystemPrompt(request), BuildGenerationTool(), BuildGenerateUserContent(request), request.ModelOverride), ct);
+        return ParseGenerateResult(input, usage);
     }
 
     public async Task<RecommendRevisionResult> RecommendRevisionAsync(RecommendRevisionRequest request, CancellationToken ct = default)
     {
-        var (options, client) = Current();
-        var parameters = new MessageCreateParams
-        {
-            Model = options.Model,
-            MaxTokens = options.MaxTokens,
-            System = BuildRecommendRevisionSystemPrompt(request),
-            Tools = [BuildRecommendRevisionTool()],
-            ToolChoice = new ToolChoiceTool { Name = RecommendRevisionToolName },
-            Messages = [new() { Role = Role.User, Content = request.OriginalQuestion }],
-            CacheControl = new CacheControlEphemeral(),
-        };
-
-        var stopwatch = Stopwatch.StartNew();
-        var response = await client.Messages.Create(parameters, ct);
-        stopwatch.Stop();
-
-        var toolUse = response.Content
-            .Select(b => b.Value)
-            .OfType<ToolUseBlock>()
-            .FirstOrDefault(b => b.Name == RecommendRevisionToolName)
-            ?? throw new InvalidOperationException("Anthropic yanıtında beklenen submit_revision_recommendation tool_use bloğu bulunamadı.");
-
-        var usage = BuildUsage(response, stopwatch, options);
-        var suggestion = toolUse.Input.TryGetValue("revision_suggestion", out var s) ? s.GetString() ?? "" : "";
+        var (input, usage) = await InvokeToolAsync(
+            new(BuildRecommendRevisionSystemPrompt(request), BuildRecommendRevisionTool(), request.OriginalQuestion), ct);
+        var suggestion = input.TryGetValue("revision_suggestion", out var s) ? s.GetString() ?? "" : "";
         return new RecommendRevisionResult(suggestion, usage);
     }
 
     public async Task<ExtractCurriculumResult> ExtractCurriculumStructureAsync(ExtractCurriculumRequest request, CancellationToken ct = default)
     {
-        var (options, client) = Current();
-        var parameters = new MessageCreateParams
-        {
-            Model = options.Model,
-            MaxTokens = options.MaxTokens,
-            System = BuildExtractCurriculumSystemPrompt(request),
-            Tools = [BuildExtractCurriculumTool()],
-            ToolChoice = new ToolChoiceTool { Name = ExtractCurriculumToolName },
-            Messages = [new() { Role = Role.User, Content = $"Sınıf {request.Grade}, {request.Subject} için yukarıdaki dokümandan müfredat yapısını çıkar." }],
-            CacheControl = new CacheControlEphemeral(),
-        };
-
-        var stopwatch = Stopwatch.StartNew();
-        var response = await client.Messages.Create(parameters, ct);
-        stopwatch.Stop();
-
-        var toolUse = response.Content
-            .Select(b => b.Value)
-            .OfType<ToolUseBlock>()
-            .FirstOrDefault(b => b.Name == ExtractCurriculumToolName)
-            ?? throw new InvalidOperationException("Anthropic yanıtında beklenen submit_curriculum_structure tool_use bloğu bulunamadı.");
-
-        var usage = BuildUsage(response, stopwatch, options);
-        return ParseExtractCurriculumResult(toolUse.Input, usage);
+        var (input, usage) = await InvokeToolAsync(
+            new(BuildExtractCurriculumSystemPrompt(request), BuildExtractCurriculumTool(),
+                $"Sınıf {request.Grade}, {request.Subject} için yukarıdaki dokümandan müfredat yapısını çıkar."), ct);
+        return ParseExtractCurriculumResult(input, usage);
     }
 
     private static Tool BuildExtractCurriculumTool()
@@ -376,31 +285,9 @@ public class AnthropicLLMProvider : ILLMProvider
 
     public async Task<CurriculumAlignmentResult> ValidateCurriculumAlignmentAsync(ValidateCurriculumAlignmentRequest request, CancellationToken ct = default)
     {
-        var (options, client) = Current();
-        var model = request.ModelOverride ?? options.Model;
-        var parameters = new MessageCreateParams
-        {
-            Model = model,
-            MaxTokens = options.MaxTokens,
-            System = BuildValidateCurriculumAlignmentSystemPrompt(request),
-            Tools = [BuildValidateCurriculumAlignmentTool()],
-            ToolChoice = new ToolChoiceTool { Name = ValidateCurriculumAlignmentToolName },
-            Messages = [new() { Role = Role.User, Content = request.QuestionText }],
-            CacheControl = new CacheControlEphemeral(),
-        };
-
-        var stopwatch = Stopwatch.StartNew();
-        var response = await client.Messages.Create(parameters, ct);
-        stopwatch.Stop();
-
-        var toolUse = response.Content
-            .Select(b => b.Value)
-            .OfType<ToolUseBlock>()
-            .FirstOrDefault(b => b.Name == ValidateCurriculumAlignmentToolName)
-            ?? throw new InvalidOperationException("Anthropic yanıtında beklenen submit_curriculum_alignment tool_use bloğu bulunamadı.");
-
-        var usage = BuildUsage(response, stopwatch, options, model);
-        var input = toolUse.Input;
+        var (input, usage) = await InvokeToolAsync(
+            new(BuildValidateCurriculumAlignmentSystemPrompt(request), BuildValidateCurriculumAlignmentTool(),
+                request.QuestionText, request.ModelOverride), ct);
 
         static List<string> GetStringArray(IReadOnlyDictionary<string, JsonElement> input, string key) =>
             input.TryGetValue(key, out var v) && v.ValueKind == JsonValueKind.Array

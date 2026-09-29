@@ -77,6 +77,8 @@ public static class DependencyInjection
         services.Configure<AiRoutingOptions>(configuration.GetSection("Ai"));
         services.Configure<AnthropicOptions>(configuration.GetSection("Ai:Anthropic"));
         services.AddScoped<AnthropicLLMProvider>();
+        services.Configure<ClaudeCliOptions>(configuration.GetSection("Ai:ClaudeCli"));
+        services.AddScoped<ClaudeCliLLMProvider>();
         services.AddScoped<LocalHeuristicLLMProvider>();
         services.Configure<OpenAiOptions>(configuration.GetSection("Judge:OpenAI"));
         services.AddScoped<OpenAiLLMProvider>();
