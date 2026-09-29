@@ -21,6 +21,7 @@ public class PermissionAuthorizationHandler(PermissionService permissions) : Aut
     protected override async Task HandleRequirementAsync(
         AuthorizationHandlerContext context, PermissionRequirement requirement)
     {
+        if (context.User.Identity?.IsAuthenticated != true) return;
         var roleClaim = context.User.FindFirst(ClaimTypes.Role)?.Value;
         if (roleClaim is null || !Enum.TryParse<UserRole>(roleClaim, ignoreCase: true, out var role))
         {

@@ -1,5 +1,6 @@
 @page "/admin/settings"
 @rendermode InteractiveServer
+@inject MaarifPlatform.Web.Security.OperationGuard Guard
 @attribute [Authorize(Roles = "Admin")]
 @using System.Security.Claims
 @using MaarifPlatform.Infrastructure.Ai
@@ -391,6 +392,7 @@
 
     private async Task LoadAnthropicModelsAsync()
     {
+        await Guard.RequireAsync("AdminOnly");
         _loadingAnthropicModels = true;
         _anthropicModelsError = null;
         try
@@ -411,6 +413,7 @@
 
     private async Task LoadOpenAiModelsAsync()
     {
+        await Guard.RequireAsync("AdminOnly");
         _loadingOpenAiModels = true;
         _openAiModelsError = null;
         try
@@ -431,6 +434,7 @@
 
     private async Task LoadGeminiModelsAsync()
     {
+        await Guard.RequireAsync("AdminOnly");
         _loadingGeminiModels = true;
         _geminiModelsError = null;
         try
@@ -451,6 +455,7 @@
 
     private async Task LoadVisionAnthropicModelsAsync()
     {
+        await Guard.RequireAsync("AdminOnly");
         _loadingVisionAnthropicModels = true;
         _visionAnthropicModelsError = null;
         try
@@ -471,6 +476,7 @@
 
     private async Task LoadEmbeddingModelsAsync()
     {
+        await Guard.RequireAsync("AdminOnly");
         _loadingEmbeddingModels = true;
         _embeddingModelsError = null;
         try
@@ -491,6 +497,7 @@
 
     private async Task SaveAsync()
     {
+        await Guard.RequireAsync("AdminOnly");
         _error = null;
         _message = null;
 
@@ -500,55 +507,57 @@
         await using var scope = ScopeFactory.CreateAsyncScope();
         var settings = scope.ServiceProvider.GetRequiredService<SystemSettingsService>();
 
-        async Task SetAsync(string key, string? value)
+        var pending = new Dictionary<string, string>();
+        void Set(string key, string? value)
         {
             if (value is not null)
             {
-                await settings.SetAsync(key, value, userId);
+                pending[key] = value;
             }
         }
 
         try
         {
-            await SetAsync("Ai:Provider", _form.AiProvider);
-            await SetAsync("Ai:Anthropic:Model", _form.AnthropicModel);
-            await SetAsync("Ai:Anthropic:MaxTokens", _form.AnthropicMaxTokens?.ToString());
-            if (!string.IsNullOrWhiteSpace(_form.AnthropicApiKey)) await SetAsync("Ai:Anthropic:ApiKey", _form.AnthropicApiKey);
+            Set("Ai:Provider", _form.AiProvider);
+            Set("Ai:Anthropic:Model", _form.AnthropicModel);
+            Set("Ai:Anthropic:MaxTokens", _form.AnthropicMaxTokens?.ToString());
+            if (!string.IsNullOrWhiteSpace(_form.AnthropicApiKey)) Set("Ai:Anthropic:ApiKey", _form.AnthropicApiKey);
 
-            await SetAsync("Judge:SecondaryProvider", _form.JudgeSecondaryProvider);
-            await SetAsync("Judge:OpenAI:Model", _form.OpenAiModel);
-            await SetAsync("Judge:OpenAI:MaxTokens", _form.OpenAiMaxTokens?.ToString());
-            await SetAsync("Judge:ConsensusConfidenceThreshold", _form.JudgeConsensusConfidenceThreshold?.ToString(System.Globalization.CultureInfo.InvariantCulture));
-            await SetAsync("Judge:ConsensusScoreDeltaThreshold", _form.JudgeConsensusScoreDeltaThreshold?.ToString());
-            if (!string.IsNullOrWhiteSpace(_form.OpenAiApiKey)) await SetAsync("Judge:OpenAI:ApiKey", _form.OpenAiApiKey);
+            Set("Judge:SecondaryProvider", _form.JudgeSecondaryProvider);
+            Set("Judge:OpenAI:Model", _form.OpenAiModel);
+            Set("Judge:OpenAI:MaxTokens", _form.OpenAiMaxTokens?.ToString());
+            Set("Judge:ConsensusConfidenceThreshold", _form.JudgeConsensusConfidenceThreshold?.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            Set("Judge:ConsensusScoreDeltaThreshold", _form.JudgeConsensusScoreDeltaThreshold?.ToString());
+            if (!string.IsNullOrWhiteSpace(_form.OpenAiApiKey)) Set("Judge:OpenAI:ApiKey", _form.OpenAiApiKey);
 
-            await SetAsync("Vision:Provider", _form.VisionProvider);
-            await SetAsync("Vision:SecondaryProvider", _form.VisionSecondaryProvider);
-            await SetAsync("Vision:Gemini:Model", _form.GeminiModel);
-            await SetAsync("Vision:Anthropic:Model", _form.VisionAnthropicModel);
-            await SetAsync("Vision:ConsensusConfidenceThreshold", _form.VisionConsensusConfidenceThreshold?.ToString(System.Globalization.CultureInfo.InvariantCulture));
-            if (!string.IsNullOrWhiteSpace(_form.GeminiApiKey)) await SetAsync("Vision:Gemini:ApiKey", _form.GeminiApiKey);
-            if (!string.IsNullOrWhiteSpace(_form.VisionAnthropicApiKey)) await SetAsync("Vision:Anthropic:ApiKey", _form.VisionAnthropicApiKey);
+            Set("Vision:Provider", _form.VisionProvider);
+            Set("Vision:SecondaryProvider", _form.VisionSecondaryProvider);
+            Set("Vision:Gemini:Model", _form.GeminiModel);
+            Set("Vision:Anthropic:Model", _form.VisionAnthropicModel);
+            Set("Vision:ConsensusConfidenceThreshold", _form.VisionConsensusConfidenceThreshold?.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            if (!string.IsNullOrWhiteSpace(_form.GeminiApiKey)) Set("Vision:Gemini:ApiKey", _form.GeminiApiKey);
+            if (!string.IsNullOrWhiteSpace(_form.VisionAnthropicApiKey)) Set("Vision:Anthropic:ApiKey", _form.VisionAnthropicApiKey);
 
-            await SetAsync("Generation:CurriculumValidatorProvider", _form.CurriculumValidatorProvider);
-            await SetAsync("Generation:MaxRegenerationAttempts", _form.GenerationMaxRegenerationAttempts?.ToString());
-            await SetAsync("Generation:SimilarityRejectThreshold", _form.GenerationSimilarityRejectThreshold?.ToString(System.Globalization.CultureInfo.InvariantCulture));
-            await SetAsync("Generation:MaxQuestionCount", _form.GenerationMaxQuestionCount?.ToString());
+            Set("Generation:CurriculumValidatorProvider", _form.CurriculumValidatorProvider);
+            Set("Generation:MaxRegenerationAttempts", _form.GenerationMaxRegenerationAttempts?.ToString());
+            Set("Generation:SimilarityRejectThreshold", _form.GenerationSimilarityRejectThreshold?.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            Set("Generation:MaxQuestionCount", _form.GenerationMaxQuestionCount?.ToString());
 
-            await SetAsync("Embeddings:Provider", _form.EmbeddingsProvider);
-            await SetAsync("Embeddings:OpenAI:Model", _form.EmbeddingsModel);
-            if (!string.IsNullOrWhiteSpace(_form.EmbeddingsApiKey)) await SetAsync("Embeddings:OpenAI:ApiKey", _form.EmbeddingsApiKey);
+            Set("Embeddings:Provider", _form.EmbeddingsProvider);
+            Set("Embeddings:OpenAI:Model", _form.EmbeddingsModel);
+            if (!string.IsNullOrWhiteSpace(_form.EmbeddingsApiKey)) Set("Embeddings:OpenAI:ApiKey", _form.EmbeddingsApiKey);
 
             foreach (var stage in _stages)
             {
                 foreach (var (diffKey, _) in _difficulties)
                 {
                     var cellKey = $"{stage}:{diffKey}";
-                    await SetAsync($"{stage}:Routing:{diffKey}", _form.RoutingMatrix.GetValueOrDefault(cellKey, ""));
+                    Set($"{stage}:Routing:{diffKey}", _form.RoutingMatrix.GetValueOrDefault(cellKey, ""));
                 }
             }
 
-            _message = "Ayarlar kaydedildi ve etkinleştirildi.";
+            await settings.SetManyAsync(pending, userId);
+            _message = "Ayarlar kaydedildi. Diğer uygulamada en geç 15 saniye içinde etkinleşir.";
             _form.AnthropicApiKey = _form.OpenAiApiKey = _form.GeminiApiKey = _form.VisionAnthropicApiKey = _form.EmbeddingsApiKey = "";
             OnInitialized();
         }

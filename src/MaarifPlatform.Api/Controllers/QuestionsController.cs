@@ -20,7 +20,7 @@ public class QuestionsController(
     : ControllerBase
 {
     [HttpPost("generate")]
-    [Authorize(Roles = "Admin,Editor")]
+    [Authorize(Policy = "QuestionGenerationAccess")]
     public async Task<ActionResult<GenerateQuestionResponse>> Generate(GenerateQuestionApiRequest request, CancellationToken ct)
     {
         if (!Enum.TryParse<DifficultyLevel>(request.Difficulty, ignoreCase: true, out _))
@@ -37,7 +37,7 @@ public class QuestionsController(
     }
 
     [HttpPost("{id:guid}/analyze")]
-    [Authorize(Roles = "Admin,Editor")]
+    [Authorize(Policy = "QuestionEdit")]
     public async Task<ActionResult<AnalysisSummaryResponse>> Analyze(Guid id, CancellationToken ct)
     {
         try
@@ -55,7 +55,7 @@ public class QuestionsController(
     }
 
     [HttpPost("{id:guid}/transform")]
-    [Authorize(Roles = "Admin,Editor")]
+    [Authorize(Policy = "QuestionEdit")]
     public async Task<ActionResult<TransformationSummaryResponse>> Transform(Guid id, CancellationToken ct)
     {
         try
@@ -74,7 +74,7 @@ public class QuestionsController(
     }
 
     [HttpPost("{id:guid}/review")]
-    [Authorize(Roles = "Admin,Editor")]
+    [Authorize(Policy = "QuestionEdit")]
     public async Task<IActionResult> Review(Guid id, ReviewDecisionRequest request, CancellationToken ct)
     {
         try
@@ -89,6 +89,7 @@ public class QuestionsController(
     }
 
     [HttpGet("{id:guid}")]
+    [Authorize(Policy = "QuestionPoolAccess")]
     public async Task<ActionResult<QuestionDetailResponse>> GetById(Guid id, CancellationToken ct)
     {
         var question = await db.Questions.FirstOrDefaultAsync(q => q.Id == id, ct);

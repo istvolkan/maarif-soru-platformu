@@ -30,7 +30,7 @@ namespace MaarifPlatform.Infrastructure;
 /// kalır — bunun dışındaki her şey burada, iki Program.cs'in birbirinden sürüklenmesini önlemek
 /// için. AuthService/IJwtTokenService de buradadır (JWT ÜRETİMİ ASP.NET'e bağımlı değildir,
 /// yalnızca JWT DOĞRULAMA middleware'i Api'ye özeldir) — Web projesi JwtToken alanını hiç
-/// kullanmaz ama aynı parola doğrulama mantığını (AuthService.LoginAsync) tekrar yazmak yerine
+/// kullanmaz ama aynı parola doğrulama mantığını (AuthService.ValidateCredentialsAsync) tekrar yazmak yerine
 /// paylaşır.</summary>
 public static class DependencyInjection
 {
@@ -59,15 +59,11 @@ public static class DependencyInjection
         services.Configure<OpenAIEmbeddingOptions>(configuration.GetSection("Embeddings:OpenAI"));
         services.AddHttpClient<OpenAIEmbeddingProvider>();
 
-        var embeddingProviderName = configuration["Embeddings:Provider"] ?? "Local";
-        if (string.Equals(embeddingProviderName, "OpenAI", StringComparison.OrdinalIgnoreCase))
-        {
-            services.AddScoped<IEmbeddingProvider>(sp => sp.GetRequiredService<OpenAIEmbeddingProvider>());
-        }
-        else
-        {
-            services.AddScoped<IEmbeddingProvider, LocalDeterministicEmbeddingProvider>();
-        }
+        services.AddScoped<LocalDeterministicEmbeddingProvider>();
+        services.AddScoped<IEmbeddingProvider>(sp =>
+            string.Equals(configuration["Embeddings:Provider"], "OpenAI", StringComparison.OrdinalIgnoreCase)
+                ? sp.GetRequiredService<OpenAIEmbeddingProvider>()
+                : sp.GetRequiredService<LocalDeterministicEmbeddingProvider>());
 
         services.AddScoped<ReferenceIngestionService>();
         services.AddScoped<ReferenceSearchService>();
@@ -129,12 +125,14 @@ public static class DependencyInjection
         services.AddHttpClient<ProviderModelCatalogService>();
 
         // Auth çekirdeği — JWT ÜRETİMİ (doğrulama middleware'i değil) ve parola doğrulama burada;
-        // her iki host da aynı AuthService.LoginAsync'i kullanır.
+        // Her iki host ortak credential doğrulamasını kullanır; yalnızca API JWT üretir.
         services.Configure<JwtOptions>(configuration.GetSection("Auth:Jwt"));
         services.Configure<BootstrapAdminOptions>(configuration.GetSection("Auth:BootstrapAdmin"));
         services.AddScoped<IPasswordHasher<AppUser>, PasswordHasher<AppUser>>();
         services.AddScoped<IJwtTokenService, JwtTokenService>();
         services.AddScoped<AuthService>();
+        services.AddScoped<SessionValidator>();
+        services.AddScoped<UserManagementService>();
 
         // §18 Rol bazlı yetki matrisi — [Authorize(Policy=nameof(Permission.X))] sayfaları için.
         // Politikaların kendisi (AddAuthorization/AddPolicy) Web'in Program.cs'inde kayıtlıdır

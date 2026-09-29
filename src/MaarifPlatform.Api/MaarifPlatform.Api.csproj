@@ -16,6 +16,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Content Update="appsettings.*.local.json" CopyToOutputDirectory="Never" CopyToPublishDirectory="Never" />
     <ProjectReference Include="..\MaarifPlatform.Application\MaarifPlatform.Application.csproj" />
     <ProjectReference Include="..\MaarifPlatform.Infrastructure\MaarifPlatform.Infrastructure.csproj" />
   </ItemGroup>

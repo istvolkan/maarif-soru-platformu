@@ -12,16 +12,36 @@ public class SystemSettingsServiceTests
             .UseInMemoryDatabase(Guid.NewGuid().ToString())
             .Options);
 
-    // Gerçek bir Postgres olmadan Load() sessizce boş veriye düşer (bkz. DatabaseSettingsProvider'daki
-    // try/catch) — bu testler yalnızca SystemSettingsService'in upsert mantığını doğrular, canlı
-    // yeniden yükleme mekanizmasının kendisini değil (o, gerçek DB ile E2E'de doğrulanır).
-    private static DatabaseSettingsProvider BuildSettingsProvider() => new("Host=unused;Database=unused");
+    private sealed class Reloader : ISettingsReloader
+    {
+        public int Calls { get; private set; }
+        public void SignalReload() => Calls++;
+    }
+    private static SettingsSecretProtector Protector() => new(Convert.ToBase64String(new byte[32]));
+
+    [Fact]
+    public async Task Batch_EncryptsSecretsAndReloadsOnce()
+    {
+        await using var db = BuildDb();
+        var reloader = new Reloader();
+        var protector = Protector();
+        var service = new SystemSettingsService(db, reloader, protector);
+        await service.SetManyAsync(new Dictionary<string, string>
+        {
+            ["Ai:Provider"] = "Anthropic",
+            ["Ai:Anthropic:ApiKey"] = "test-secret"
+        }, null);
+        Assert.Equal(1, reloader.Calls);
+        var row = await db.SystemSettings.SingleAsync(s => s.Key.EndsWith(":ApiKey"));
+        Assert.DoesNotContain("test-secret", row.Value);
+        Assert.Equal("test-secret", protector.Unprotect(row.Key, row.Value));
+    }
 
     [Fact]
     public async Task SetAsync_NewKey_InsertsRow()
     {
         await using var db = BuildDb();
-        var service = new SystemSettingsService(db, BuildSettingsProvider());
+        var service = new SystemSettingsService(db, new Reloader(), Protector());
         var userId = Guid.NewGuid();
 
         await service.SetAsync("Ai:Provider", "Anthropic", userId);
@@ -36,7 +56,7 @@ public class SystemSettingsServiceTests
     public async Task SetAsync_ExistingKey_UpdatesValueInPlace()
     {
         await using var db = BuildDb();
-        var service = new SystemSettingsService(db, BuildSettingsProvider());
+        var service = new SystemSettingsService(db, new Reloader(), Protector());
 
         await service.SetAsync("Ai:Provider", "Local", Guid.NewGuid());
         await service.SetAsync("Ai:Provider", "Anthropic", Guid.NewGuid());
@@ -50,7 +70,7 @@ public class SystemSettingsServiceTests
     public async Task SetAsync_DifferentKeys_InsertsSeparateRows()
     {
         await using var db = BuildDb();
-        var service = new SystemSettingsService(db, BuildSettingsProvider());
+        var service = new SystemSettingsService(db, new Reloader(), Protector());
 
         await service.SetAsync("Ai:Provider", "Anthropic", null);
         await service.SetAsync("Judge:SecondaryProvider", "OpenAI", null);

@@ -1,3 +1,4 @@
+using MaarifPlatform.Infrastructure.Auth;
 using MaarifPlatform.Api.Dtos;
 using MaarifPlatform.Domain.Entities;
 using MaarifPlatform.Domain.Enums;
@@ -13,34 +14,20 @@ namespace MaarifPlatform.Api.Controllers;
 [ApiController]
 [Route("api/users")]
 [Authorize(Roles = "Admin")]
-public class UsersController(MaarifDbContext db, IPasswordHasher<AppUser> passwordHasher) : ControllerBase
+public class UsersController(MaarifDbContext db, UserManagementService users) : ControllerBase
 {
     [HttpPost]
     public async Task<ActionResult<UserResponse>> Create(CreateUserRequest request, CancellationToken ct)
     {
-        if (!Enum.TryParse<UserRole>(request.Role, ignoreCase: true, out var role))
+        try
         {
-            return BadRequest($"Geçersiz rol: {request.Role}. Geçerli değerler: {string.Join(", ", Enum.GetNames<UserRole>())}");
+            var user = await users.CreateAsync(request.Name, request.Email, request.Password, request.Role, ct);
+            return CreatedAtAction(nameof(GetById), new { id = user.Id }, ToResponse(user));
         }
-
-        var emailTaken = await db.Users.AnyAsync(u => u.Email == request.Email, ct);
-        if (emailTaken)
+        catch (InvalidOperationException ex)
         {
-            return Conflict("Bu e-posta adresiyle zaten bir kullanıcı var.");
+            return BadRequest(ex.Message);
         }
-
-        var user = new AppUser
-        {
-            Name = request.Name,
-            Email = request.Email,
-            Role = role
-        };
-        user.PasswordHash = passwordHasher.HashPassword(user, request.Password);
-
-        db.Users.Add(user);
-        await db.SaveChangesAsync(ct);
-
-        return CreatedAtAction(nameof(GetById), new { id = user.Id }, ToResponse(user));
     }
 
     [HttpGet]

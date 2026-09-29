@@ -28,6 +28,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <ProjectReference Include="..\..\src\MaarifPlatform.Application\MaarifPlatform.Application.csproj" />
     <ProjectReference Include="..\..\src\MaarifPlatform.Infrastructure\MaarifPlatform.Infrastructure.csproj" />
   </ItemGroup>

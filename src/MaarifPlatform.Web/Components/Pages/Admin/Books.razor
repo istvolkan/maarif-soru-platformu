@@ -1,5 +1,6 @@
 @page "/admin/books"
 @rendermode InteractiveServer
+@inject MaarifPlatform.Web.Security.OperationGuard Guard
 @attribute [Authorize(Roles = "Admin")]
 @using MaarifPlatform.Application.Storage
 @using MaarifPlatform.Infrastructure.Curriculum
@@ -122,6 +123,7 @@ else
 
     private async Task LoadAsync()
     {
+        await Guard.RequireAsync("AdminOnly");
         await using var scope = ScopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<MaarifDbContext>();
 
@@ -148,6 +150,7 @@ else
 
     private async Task UploadAsync()
     {
+        await Guard.RequireAsync("AdminOnly");
         if (_selectedFile is null)
         {
             return;
@@ -195,6 +198,7 @@ else
 
     private async Task DeleteAsync(Guid bookId)
     {
+        await Guard.RequireAsync("AdminOnly");
         _error = null;
         _deletingId = bookId;
         await using var scope = ScopeFactory.CreateAsyncScope();
@@ -229,6 +233,7 @@ else
 
     private async Task ExtractAsync(Guid bookId)
     {
+        await Guard.RequireAsync("AdminOnly");
         _error = null;
         await using var scope = ScopeFactory.CreateAsyncScope();
         var extractionService = scope.ServiceProvider.GetRequiredService<BookExtractionService>();

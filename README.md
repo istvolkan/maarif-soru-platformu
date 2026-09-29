@@ -95,6 +95,8 @@ alışkanlığı bu projede sürdürülmelidir.
 
 ## Yerel geliştirme
 
+**Güvenlik revizyonu:** İlk kurulum ve mevcut ortamı yükseltmeden önce [SECURITY-REVISION.md](SECURITY-REVISION.md) içindeki secret yapılandırmasını ve migration adımlarını uygulayın.
+
 Gereksinimler: .NET 8 SDK, Docker Desktop, `dotnet-ef` global tool (`dotnet tool install -g dotnet-ef`).
 
 ```bash
@@ -120,9 +122,9 @@ curl http://localhost:5xxx/health
 İlk giriş: `Auth:BootstrapAdmin` config'inden seed edilen admin ile Web UI'daki `/login`
 sayfasından giriş yapılabilir (aynı bootstrap admin, Api'nin JWT girişiyle aynı kullanıcı).
 
-Bağlantı dizesi `src/MaarifPlatform.Api/appsettings.Development.json` içinde,
-docker-compose.yml'deki kullanıcı/parola ile eşleşecek şekilde tanımlıdır
-(yalnızca yerel geliştirme içindir — gerçek ortamlarda user-secrets / key vault kullanılmalı).
+Bağlantı dizesi ortam değişkeninden veya Git'e dahil edilmeyen
+`appsettings.Development.local.json` dosyasından sağlanır; Docker kullanılıyorsa
+docker-compose.yml'deki veritabanı ile eşleşmelidir. Ayrıntılar için güvenlik revizyonu notlarına bakın.
 Host portu **5433**'tür (bu makinede 5432'yi kullanan başka bir proje — `fleetview` — ile
 çakışmaması için); container içi Postgres portu standart 5432'de kalır.
 
@@ -179,9 +181,8 @@ dotnet ef migrations add <İsim> \
   sağlayıcısı çağrılır (§9 maliyet ilkesi).
 - Vision analizi mevcut "Analyzed" `QuestionVersion` satırına eklenir, yeni bir versiyon
   ÜRETMEZ — vision, analysis'in girdisidir, ayrı bir pipeline aşaması değil.
-- `Auth:Jwt:SigningKey` ve `Auth:BootstrapAdmin:Email/Password`, `appsettings.Development.json`
-  içindeki dev-only değerlerdir (aynı DB bağlantı dizesi kuralı); gerçek ortamlarda
-  user-secrets/key vault kullanılmalıdır.
+- `Auth:Jwt:SigningKey`, `Auth:BootstrapAdmin:Email/Password` ve
+  `Security:SettingsEncryptionKey` Git dışında sağlanır; bkz. [güvenlik revizyonu](SECURITY-REVISION.md).
 - Bu sprintte refresh token YOK — bilinçli MVP sınırı. JWT `Auth:Jwt:ExpiryMinutes` sonunda
   süresi dolar, istemci tekrar `POST /api/auth/login` yapmalıdır.
 - Transform/Judge mock'u (`Ai:Provider=Local`) gerçek dönüşüm/yargı YAPMAZ: soru

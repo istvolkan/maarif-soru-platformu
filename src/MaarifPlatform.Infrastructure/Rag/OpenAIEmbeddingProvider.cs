@@ -15,9 +15,9 @@ public class OpenAIEmbeddingOptions
 /// <summary>§11/§H gerçek embedding sağlayıcısı. text-embedding-3-small 1536 boyutludur —
 /// ReferenceChunk.Embedding sütunuyla (vector(1536)) uyumlu; farklı bir model seçilirse
 /// migration ile sütun boyutu güncellenmelidir (§elestiri madde 6).</summary>
-public class OpenAIEmbeddingProvider(HttpClient httpClient, IOptions<OpenAIEmbeddingOptions> options) : IEmbeddingProvider
+public class OpenAIEmbeddingProvider(HttpClient httpClient, IOptionsMonitor<OpenAIEmbeddingOptions> options) : IEmbeddingProvider
 {
-    private readonly OpenAIEmbeddingOptions _options = options.Value;
+    private readonly OpenAIEmbeddingOptions _options = options.CurrentValue;
 
     public int Dimensions => 1536;
 

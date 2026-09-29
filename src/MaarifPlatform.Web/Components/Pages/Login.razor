@@ -1,6 +1,7 @@
 @page "/login"
 @attribute [AllowAnonymous]
 @using System.Security.Claims
+@using MaarifPlatform.Infrastructure.Auth
 @using MaarifPlatform.Infrastructure.Persistence
 @using Microsoft.AspNetCore.Authentication
 @using Microsoft.AspNetCore.Authentication.Cookies
@@ -135,11 +136,9 @@
     private async Task HandleLoginAsync()
     {
         await using var scope = ScopeFactory.CreateAsyncScope();
-        var db = scope.ServiceProvider.GetRequiredService<MaarifDbContext>();
-        var hasher = scope.ServiceProvider.GetRequiredService<IPasswordHasher<AppUser>>();
-
-        var user = await db.Users.FirstOrDefaultAsync(u => u.Email == _input.Email);
-        if (user is null || hasher.VerifyHashedPassword(user, user.PasswordHash, _input.Password) == PasswordVerificationResult.Failed)
+        var auth = scope.ServiceProvider.GetRequiredService<AuthService>();
+        var user = await auth.ValidateCredentialsAsync(_input.Email, _input.Password);
+        if (user is null)
         {
             _error = "E-posta veya parola hatalı.";
             return;
@@ -148,6 +147,7 @@
         var claims = new List<Claim>
         {
             new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()),
+            new Claim(SessionValidator.StampClaim, user.SecurityStamp),
             new Claim(ClaimTypes.Name, user.Name),
             new Claim(ClaimTypes.Email, user.Email),
             new Claim(ClaimTypes.Role, user.Role.ToString())
@@ -156,7 +156,7 @@
 
         await HttpContext.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, new ClaimsPrincipal(identity));
 
-        NavigationManager.NavigateTo(string.IsNullOrWhiteSpace(ReturnUrl) ? "/" : ReturnUrl, forceLoad: true);
+        NavigationManager.NavigateTo(LocalReturnUrl.Normalize(ReturnUrl), forceLoad: true);
     }
 
     private sealed class LoginInput
