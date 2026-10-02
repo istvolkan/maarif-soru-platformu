@@ -1,3 +1,4 @@
+using MaarifPlatform.Application.Generation;
 using MaarifPlatform.Application.Providers;
 using MaarifPlatform.Application.Visuals;
 
@@ -108,13 +109,14 @@ public class LocalHeuristicLLMProvider : ILLMProvider
 
     public Task<GenerateQuestionResult> GenerateQuestionAsync(GenerateQuestionRequest request, CancellationToken ct = default)
     {
-        var options = new List<string> { "A seçeneği", "B seçeneği", "C seçeneği", "D seçeneği" };
-        var distractors = new List<DistractorDto>
-        {
-            new("B", null, "[MOCK] Gerçek çeldirici analizi yapılmadı."),
-            new("C", null, "[MOCK] Gerçek çeldirici analizi yapılmadı."),
-            new("D", null, "[MOCK] Gerçek çeldirici analizi yapılmadı.")
-        };
+        // Çoktan seçmeli için şık adedi Grade'e göre sabit (bkz. MultipleChoiceOptionPolicy) —
+        // mock bunu görmezden gelip her zaman 4 dönerse, 9-12. sınıf ÇSS slotları
+        // GenerationOrchestrationService'in yeni şık-adedi doğrulamasında sonsuz regenerate'e düşer.
+        var optionCount = MultipleChoiceOptionPolicy.RequiredOptionCountFor(request.Grade, request.QuestionType) ?? 4;
+        var options = Enumerable.Range(0, optionCount).Select(i => $"{(char)('A' + i)} seçeneği").ToList();
+        var distractors = Enumerable.Range(1, optionCount - 1)
+            .Select(i => new DistractorDto(((char)('A' + i)).ToString(), null, "[MOCK] Gerçek çeldirici analizi yapılmadı."))
+            .ToList();
 
         var (visualRequired, visualSpec) = BuildMockVisualSpec(request.VisualUsage);
 

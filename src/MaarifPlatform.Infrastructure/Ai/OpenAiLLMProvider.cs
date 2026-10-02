@@ -1,18 +1,15 @@
 using System.Diagnostics;
 using System.Text.Json;
+using MaarifPlatform.Application.Generation;
 using MaarifPlatform.Application.Providers;
 using Microsoft.Extensions.Options;
-using OpenAI.Chat;
+using OpenAI.Responses;
+
+#pragma warning disable OPENAI001 // Responses types are marked experimental in OpenAI SDK 2.13.
 
 namespace MaarifPlatform.Infrastructure.Ai;
 
-/// <summary>§8/§10 Judge ikincil/consensus sağlayıcısı — OpenAI Chat Completions API üzerinden,
-/// function-calling ile zorunlu yapılandırılmış çıktı. YALNIZCA EvaluateQuestionAsync gerçek
-/// implemente edilmiştir; Analyze/Transform/Generate bu sprintte kapsam dışı (bu provider şu an
-/// yalnızca Judge'ın çapraz-sağlayıcı kontrolü için kullanılıyor — bkz. TransformationOrchestrationService).
-/// Sistem promptu AnthropicLLMProvider.BuildEvaluateSystemPrompt/BuildEvaluateUserContent'teki
-/// AYNI içeriktir — bağımsız çapraz-kontrol için iki sağlayıcıya farklı prompt vermek amaca
-/// aykırı olur.</summary>
+/// <summary>OpenAI Responses API provider for generation, evaluation and curriculum tools.</summary>
 public class OpenAiLLMProvider : ILLMProvider
 {
     private const string EvaluateToolName = "submit_evaluation";
@@ -21,7 +18,7 @@ public class OpenAiLLMProvider : ILLMProvider
     private const string ValidateCurriculumAlignmentToolName = "submit_curriculum_alignment";
 
     private readonly IOptionsMonitor<OpenAiOptions> _optionsMonitor;
-    private ChatClient? _client;
+    private ResponsesClient? _client;
     private string? _clientKey;
 
     public OpenAiLLMProvider(IOptionsMonitor<OpenAiOptions> optionsMonitor)
@@ -31,12 +28,8 @@ public class OpenAiLLMProvider : ILLMProvider
 
     public string Name => "openai";
 
-    /// <summary>Sprint 11: bkz. AnthropicLLMProvider.Current() — aynı desen. ChatClient model'i
-    /// constructor'da bağladığı için (Anthropic'in aksine), anahtar VEYA model değiştiğinde
-    /// yeniden kurulur. §16 zorluk bazlı yönlendirme: modelOverride verilirse (aynı OpenAI
-    /// hesabı/anahtarı içinde farklı bir model, ör. gpt-6-luna vs gpt-6-sol) options.Model yerine
-    /// o kullanılır — tek bir global "OpenAI modeli" varsayımı artık geçerli değil.</summary>
-    private (OpenAiOptions Options, ChatClient Client, string Model) Current(string? modelOverride = null)
+    // Select the model per request, including difficulty-based overrides.
+    private (OpenAiOptions Options, ResponsesClient Client, string Model) Current(string? modelOverride = null)
     {
         var options = _optionsMonitor.CurrentValue;
         if (string.IsNullOrWhiteSpace(options.ApiKey))
@@ -51,7 +44,7 @@ public class OpenAiLLMProvider : ILLMProvider
         var clientKey = $"{options.ApiKey}|{model}";
         if (_client is null || _clientKey != clientKey)
         {
-            _client = new ChatClient(model: model, apiKey: options.ApiKey);
+            _client = new ResponsesClient(options.ApiKey);
             _clientKey = clientKey;
         }
 
@@ -62,24 +55,27 @@ public class OpenAiLLMProvider : ILLMProvider
     {
         var (options, client, model) = Current(request.ModelOverride);
         var tool = BuildEvaluationTool();
-        var chatOptions = new ChatCompletionOptions
+        var responseOptions = new CreateResponseOptions
         {
+            Model = model,
+            StoredOutputEnabled = false,
             MaxOutputTokenCount = options.MaxTokens,
-            ToolChoice = ChatToolChoice.CreateFunctionChoice(EvaluateToolName)
+            ToolChoice = ResponseToolChoice.CreateFunctionChoice(EvaluateToolName)
         };
-        chatOptions.Tools.Add(tool);
+        responseOptions.Tools.Add(tool);
 
-        List<ChatMessage> messages =
+        List<ResponseItem> messages =
         [
-            new SystemChatMessage(BuildEvaluateSystemPrompt(request)),
-            new UserChatMessage(BuildEvaluateUserContent(request))
+            ResponseItem.CreateSystemMessageItem(BuildEvaluateSystemPrompt(request)),
+            ResponseItem.CreateUserMessageItem(BuildEvaluateUserContent(request))
         ];
 
         var stopwatch = Stopwatch.StartNew();
-        ChatCompletion completion = await client.CompleteChatAsync(messages, chatOptions, ct);
+        foreach (var message in messages) responseOptions.InputItems.Add(message);
+        ResponseResult completion = await client.CreateResponseAsync(responseOptions, ct);
         stopwatch.Stop();
 
-        var toolCall = completion.ToolCalls.FirstOrDefault(t => t.FunctionName == EvaluateToolName)
+        var toolCall = completion.OutputItems.OfType<FunctionCallResponseItem>().FirstOrDefault(t => t.FunctionName == EvaluateToolName)
             ?? throw new InvalidOperationException("OpenAI yanıtında beklenen submit_evaluation tool_call bulunamadı.");
 
         using var argsDoc = JsonDocument.Parse(toolCall.FunctionArguments);
@@ -105,25 +101,28 @@ public class OpenAiLLMProvider : ILLMProvider
     public async Task<GenerateQuestionResult> GenerateQuestionAsync(GenerateQuestionRequest request, CancellationToken ct = default)
     {
         var (options, client, model) = Current(request.ModelOverride);
-        var tool = BuildGenerationTool();
-        var chatOptions = new ChatCompletionOptions
+        var tool = BuildGenerationTool(MultipleChoiceOptionPolicy.RequiredOptionCountFor(request.Grade, request.QuestionType));
+        var responseOptions = new CreateResponseOptions
         {
+            Model = model,
+            StoredOutputEnabled = false,
             MaxOutputTokenCount = options.MaxTokens,
-            ToolChoice = ChatToolChoice.CreateFunctionChoice(GenerateToolName)
+            ToolChoice = ResponseToolChoice.CreateFunctionChoice(GenerateToolName)
         };
-        chatOptions.Tools.Add(tool);
+        responseOptions.Tools.Add(tool);
 
-        List<ChatMessage> messages =
+        List<ResponseItem> messages =
         [
-            new SystemChatMessage(AnthropicLLMProvider.BuildGenerateSystemPrompt(request)),
-            new UserChatMessage(AnthropicLLMProvider.BuildGenerateUserContent(request))
+            ResponseItem.CreateSystemMessageItem(AnthropicLLMProvider.BuildGenerateSystemPrompt(request)),
+            ResponseItem.CreateUserMessageItem(AnthropicLLMProvider.BuildGenerateUserContent(request))
         ];
 
         var stopwatch = Stopwatch.StartNew();
-        ChatCompletion completion = await client.CompleteChatAsync(messages, chatOptions, ct);
+        foreach (var message in messages) responseOptions.InputItems.Add(message);
+        ResponseResult completion = await client.CreateResponseAsync(responseOptions, ct);
         stopwatch.Stop();
 
-        var toolCall = completion.ToolCalls.FirstOrDefault(t => t.FunctionName == GenerateToolName)
+        var toolCall = completion.OutputItems.OfType<FunctionCallResponseItem>().FirstOrDefault(t => t.FunctionName == GenerateToolName)
             ?? throw new InvalidOperationException("OpenAI yanıtında beklenen submit_generation tool_call bulunamadı.");
 
         var input = ParseToolArguments(toolCall.FunctionArguments);
@@ -135,24 +134,27 @@ public class OpenAiLLMProvider : ILLMProvider
     {
         var (options, client, model) = Current();
         var tool = BuildExtractCurriculumTool();
-        var chatOptions = new ChatCompletionOptions
+        var responseOptions = new CreateResponseOptions
         {
+            Model = model,
+            StoredOutputEnabled = false,
             MaxOutputTokenCount = options.MaxTokens,
-            ToolChoice = ChatToolChoice.CreateFunctionChoice(ExtractCurriculumToolName)
+            ToolChoice = ResponseToolChoice.CreateFunctionChoice(ExtractCurriculumToolName)
         };
-        chatOptions.Tools.Add(tool);
+        responseOptions.Tools.Add(tool);
 
-        List<ChatMessage> messages =
+        List<ResponseItem> messages =
         [
-            new SystemChatMessage(AnthropicLLMProvider.BuildExtractCurriculumSystemPrompt(request)),
-            new UserChatMessage($"Sınıf {request.Grade}, {request.Subject} için yukarıdaki dokümandan müfredat yapısını çıkar.")
+            ResponseItem.CreateSystemMessageItem(AnthropicLLMProvider.BuildExtractCurriculumSystemPrompt(request)),
+            ResponseItem.CreateUserMessageItem($"Sınıf {request.Grade}, {request.Subject} için yukarıdaki dokümandan müfredat yapısını çıkar.")
         ];
 
         var stopwatch = Stopwatch.StartNew();
-        ChatCompletion completion = await client.CompleteChatAsync(messages, chatOptions, ct);
+        foreach (var message in messages) responseOptions.InputItems.Add(message);
+        ResponseResult completion = await client.CreateResponseAsync(responseOptions, ct);
         stopwatch.Stop();
 
-        var toolCall = completion.ToolCalls.FirstOrDefault(t => t.FunctionName == ExtractCurriculumToolName)
+        var toolCall = completion.OutputItems.OfType<FunctionCallResponseItem>().FirstOrDefault(t => t.FunctionName == ExtractCurriculumToolName)
             ?? throw new InvalidOperationException("OpenAI yanıtında beklenen submit_curriculum_structure tool_call bulunamadı.");
 
         var input = ParseToolArguments(toolCall.FunctionArguments);
@@ -164,24 +166,27 @@ public class OpenAiLLMProvider : ILLMProvider
     {
         var (options, client, model) = Current(request.ModelOverride);
         var tool = BuildValidateCurriculumAlignmentTool();
-        var chatOptions = new ChatCompletionOptions
+        var responseOptions = new CreateResponseOptions
         {
+            Model = model,
+            StoredOutputEnabled = false,
             MaxOutputTokenCount = options.MaxTokens,
-            ToolChoice = ChatToolChoice.CreateFunctionChoice(ValidateCurriculumAlignmentToolName)
+            ToolChoice = ResponseToolChoice.CreateFunctionChoice(ValidateCurriculumAlignmentToolName)
         };
-        chatOptions.Tools.Add(tool);
+        responseOptions.Tools.Add(tool);
 
-        List<ChatMessage> messages =
+        List<ResponseItem> messages =
         [
-            new SystemChatMessage(AnthropicLLMProvider.BuildValidateCurriculumAlignmentSystemPrompt(request)),
-            new UserChatMessage(request.QuestionText)
+            ResponseItem.CreateSystemMessageItem(AnthropicLLMProvider.BuildValidateCurriculumAlignmentSystemPrompt(request)),
+            ResponseItem.CreateUserMessageItem(request.QuestionText)
         ];
 
         var stopwatch = Stopwatch.StartNew();
-        ChatCompletion completion = await client.CompleteChatAsync(messages, chatOptions, ct);
+        foreach (var message in messages) responseOptions.InputItems.Add(message);
+        ResponseResult completion = await client.CreateResponseAsync(responseOptions, ct);
         stopwatch.Stop();
 
-        var toolCall = completion.ToolCalls.FirstOrDefault(t => t.FunctionName == ValidateCurriculumAlignmentToolName)
+        var toolCall = completion.OutputItems.OfType<FunctionCallResponseItem>().FirstOrDefault(t => t.FunctionName == ValidateCurriculumAlignmentToolName)
             ?? throw new InvalidOperationException("OpenAI yanıtında beklenen submit_curriculum_alignment tool_call bulunamadı.");
 
         var input = ParseToolArguments(toolCall.FunctionArguments);
@@ -210,7 +215,7 @@ public class OpenAiLLMProvider : ILLMProvider
     /// <summary>§16 zorluk bazlı yönlendirme: model artık options.Model ile aynı olmayabilir
     /// (Current(modelOverride) çözülmüş modeli döner) — maliyet/kayıt için o çözülmüş model
     /// kullanılır, tek bir global "OpenAI modeli" varsayımı geçerli değil.</summary>
-    private AiUsage BuildUsage(ChatCompletion completion, Stopwatch stopwatch, string model)
+    private AiUsage BuildUsage(ResponseResult completion, Stopwatch stopwatch, string model)
     {
         var inputTokens = completion.Usage.InputTokenCount;
         var outputTokens = completion.Usage.OutputTokenCount;
@@ -223,15 +228,23 @@ public class OpenAiLLMProvider : ILLMProvider
             CacheReadInputTokens: cachedTokens);
     }
 
-    private static ChatTool BuildGenerationTool()
+    // Preserve optional properties in the existing tool schemas.
+    private static ResponseTool CreateFunctionTool(string name, string description, BinaryData parameters, bool strictModeEnabled)
+        => ResponseTool.CreateFunctionTool(name, parameters, strictModeEnabled, description);
+
+    private static ResponseTool BuildGenerationTool(int? requiredOptionCount = null)
     {
+        var optionsSchema = requiredOptionCount is int n
+            ? new { type = "array", description = $"Tam olarak {n} şık (bundan az ya da çok ASLA).", items = new { type = "string" }, minItems = n, maxItems = n }
+            : new { type = "array", description = "3-6 şık.", items = new { type = "string" }, minItems = 3, maxItems = 6 };
+
         var schema = new
         {
             type = "object",
             properties = new Dictionary<string, object>
             {
                 ["question"] = new { type = "string", description = "Üretilen soru metni." },
-                ["options"] = new { type = "array", description = "3-6 şık.", items = new { type = "string" }, minItems = 3, maxItems = 6 },
+                ["options"] = optionsSchema,
                 ["correct_answer"] = new { type = "string", description = "Doğru şıkkın metni (options içindeki değerlerden biri)." },
                 ["solution"] = new { type = "string", description = "Adım adım çözüm." },
                 ["distractors"] = AnthropicLLMProvider.BuildDistractorsSchema(),
@@ -246,12 +259,12 @@ public class OpenAiLLMProvider : ILLMProvider
             required = new[] { "question", "options", "correct_answer", "solution", "distractors", "visual_required" }
         };
 
-        return ChatTool.CreateFunctionTool(
+        return CreateFunctionTool(
             GenerateToolName, "Üretilen sorunun yapılandırılmış sonucunu bildir.",
-            BinaryData.FromString(JsonSerializer.Serialize(schema)));
+            BinaryData.FromString(JsonSerializer.Serialize(schema)), strictModeEnabled: false);
     }
 
-    private static ChatTool BuildExtractCurriculumTool()
+    private static ResponseTool BuildExtractCurriculumTool()
     {
         var learningOutcomeSchema = new
         {
@@ -312,14 +325,14 @@ public class OpenAiLLMProvider : ILLMProvider
             required = new[] { "themes", "field_skills" }
         };
 
-        return ChatTool.CreateFunctionTool(
+        return CreateFunctionTool(
             ExtractCurriculumToolName,
             "Sağlanan doküman parçalarından (yalnızca dokümanda YAZILI olan) müfredat yapısını bildir. " +
             "Hiçbir tema/kazanım/beceri uydurma — dokümanda bulamadığını boş bırak.",
-            BinaryData.FromString(JsonSerializer.Serialize(schema)));
+            BinaryData.FromString(JsonSerializer.Serialize(schema)), strictModeEnabled: false);
     }
 
-    private static ChatTool BuildValidateCurriculumAlignmentTool()
+    private static ResponseTool BuildValidateCurriculumAlignmentTool()
     {
         var schema = new
         {
@@ -344,14 +357,14 @@ public class OpenAiLLMProvider : ILLMProvider
             required = new[] { "measures_process_component", "learning_outcome_alignment_score", "skill_alignment_score", "issues" }
         };
 
-        return ChatTool.CreateFunctionTool(
+        return CreateFunctionTool(
             ValidateCurriculumAlignmentToolName,
             "Sorunun GERÇEK kazanım açıklamasıyla ve süreç bileşenleriyle ölçülebilir uyumunu bildir — " +
             "genel kalite değil, YALNIZCA curriculum hizası.",
-            BinaryData.FromString(JsonSerializer.Serialize(schema)));
+            BinaryData.FromString(JsonSerializer.Serialize(schema)), strictModeEnabled: false);
     }
 
-    private static ChatTool BuildEvaluationTool()
+    private static ResponseTool BuildEvaluationTool()
     {
         var schema = JsonSerializer.Serialize(new
         {
@@ -376,8 +389,8 @@ public class OpenAiLLMProvider : ILLMProvider
             required = new[] { "quality_score", "passed", "critical_failures", "quality_flags" }
         });
 
-        return ChatTool.CreateFunctionTool(
-            EvaluateToolName, "Dönüştürülmüş sorunun kalite değerlendirmesini bildir.", BinaryData.FromString(schema));
+        return CreateFunctionTool(
+            EvaluateToolName, "Dönüştürülmüş sorunun kalite değerlendirmesini bildir.", BinaryData.FromString(schema), strictModeEnabled: false);
     }
 
     private static string BuildEvaluateSystemPrompt(EvaluateQuestionRequest request) => $"""

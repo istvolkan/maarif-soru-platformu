@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using Anthropic;
 using Anthropic.Models.Messages;
+using MaarifPlatform.Application.Generation;
 using MaarifPlatform.Application.Providers;
 using MaarifPlatform.Application.Rubric;
 using MaarifPlatform.Application.Visuals;
@@ -155,7 +156,7 @@ public class AnthropicLLMProvider : ILLMProvider
             Model = model,
             MaxTokens = options.MaxTokens,
             System = BuildGenerateSystemPrompt(request),
-            Tools = [BuildGenerationTool()],
+            Tools = [BuildGenerationTool(MultipleChoiceOptionPolicy.RequiredOptionCountFor(request.Grade, request.QuestionType))],
             ToolChoice = new ToolChoiceTool { Name = GenerateToolName },
             Messages = [new() { Role = Role.User, Content = BuildGenerateUserContent(request) }],
             CacheControl = new CacheControlEphemeral(),
@@ -815,19 +816,28 @@ public class AnthropicLLMProvider : ILLMProvider
         }
     });
 
-    private static Tool BuildGenerationTool()
+    private static Tool BuildGenerationTool(int? requiredOptionCount = null)
     {
         var properties = new Dictionary<string, JsonElement>
         {
             ["question"] = Schema("string", "Üretilen soru metni."),
-            ["options"] = JsonSerializer.SerializeToElement(new
-            {
-                type = "array",
-                description = "3-6 şık.",
-                items = new { type = "string" },
-                minItems = 3,
-                maxItems = 6
-            }),
+            ["options"] = JsonSerializer.SerializeToElement(requiredOptionCount is int n
+                ? new
+                {
+                    type = "array",
+                    description = $"Tam olarak {n} şık (bundan az ya da çok ASLA).",
+                    items = new { type = "string" },
+                    minItems = n,
+                    maxItems = n
+                }
+                : new
+                {
+                    type = "array",
+                    description = "3-6 şık.",
+                    items = new { type = "string" },
+                    minItems = 3,
+                    maxItems = 6
+                }),
             ["correct_answer"] = Schema("string", "Doğru şıkkın metni (options içindeki değerlerden biri)."),
             ["solution"] = Schema("string", "Adım adım çözüm."),
             ["distractors"] = BuildDistractorsSchema(),
@@ -997,6 +1007,11 @@ public class AnthropicLLMProvider : ILLMProvider
         // §9 maliyet ilkesi: önceki deneme reddedildiyse gerekçeyi kör bir tekrar yerine somut
         // düzeltme talimatı olarak ver — aksi halde aynı hata büyük olasılıkla tekrarlanır ve
         // Generation+CurriculumValidation çağrıları boşa (0 sonuçla) harcanmış olur.
+        var requiredOptionCount = MultipleChoiceOptionPolicy.RequiredOptionCountFor(request.Grade, request.QuestionType);
+        var optionCountLine = requiredOptionCount is int n
+            ? $"\n        - Şık adedi: TAM OLARAK {n} şık (Sınıf {request.Grade} için sabit kural, bundan az/çok ASLA)."
+            : "";
+
         var previousAttemptBlock = string.IsNullOrWhiteSpace(request.PreviousAttemptFeedback)
             ? ""
             : $"""
@@ -1020,7 +1035,7 @@ public class AnthropicLLMProvider : ILLMProvider
         - Kazanım açıklaması (soru MUTLAKA bunu ölçmeli, sadece temayı değil): {request.LearningOutcomeDescription}
         - Zorluk: {request.Difficulty}
         - Soru tipi: {request.QuestionType}
-        - Muhakeme tipi: {request.ReasoningType}{skillsLine}{frameworksLine}{visualInstruction}{componentsLine}
+        - Muhakeme tipi: {request.ReasoningType}{optionCountLine}{skillsLine}{frameworksLine}{visualInstruction}{componentsLine}
 
         KURALLAR:
         1. Yalnızca aşağıdaki [KAYNAK n] bloklarına dayanarak kazanım/olgu iddiası üret.

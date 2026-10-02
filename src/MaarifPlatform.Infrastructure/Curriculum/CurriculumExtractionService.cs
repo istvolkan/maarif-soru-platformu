@@ -1,3 +1,4 @@
+using System.Globalization;
 using MaarifPlatform.Application.Providers;
 using MaarifPlatform.Domain.Entities;
 using MaarifPlatform.Domain.Enums;
@@ -58,8 +59,14 @@ public class CurriculumExtractionService(
 
         // Aynı çalıştırma içinde farklı batch'lerden gelen aynı isimli tema/aynı kodlu kazanımı
         // TEK kayda birleştirir — her chunk grubu kendi bakış açısıyla aynı temayı görebilir.
-        var themesByName = new Dictionary<string, Domain.Entities.Theme>(StringComparer.OrdinalIgnoreCase);
-        var outcomesByCode = new Dictionary<string, LearningOutcome>(StringComparer.OrdinalIgnoreCase);
+        // StringComparer.OrdinalIgnoreCase KULLANILMAZ: ordinal case-folding Türkçe noktalı/noktasız
+        // I harflerini yanlış eşler ('İ'.ToUpperInvariant() kendisi, 'i'.ToUpperInvariant() == 'I' —
+        // ikisi EŞİT SAYILMAZ), bu da "Nicelikler ve Değişimler" / "NİCELİKLER VE DEĞİŞİMLER" gibi
+        // tek farkı büyük/küçük harf olan aynı temanın iki ayrı satır olarak kaydedilmesine yol açtı
+        // (canlı veride tespit edildi). tr-TR culture-aware comparer bu harfleri doğru eşler.
+        var turkishIgnoreCase = StringComparer.Create(new CultureInfo("tr-TR"), ignoreCase: true);
+        var themesByName = new Dictionary<string, Domain.Entities.Theme>(turkishIgnoreCase);
+        var outcomesByCode = new Dictionary<string, LearningOutcome>(turkishIgnoreCase);
 
         // Bu SADECE bu run'ın içindeki tekrarları yakalar — aynı kazanım kodu DAHA ÖNCEKİ bir
         // extraction'dan (başka bir doküman, ör. aynı müfredatın 2. kitabı) veritabanında zaten
