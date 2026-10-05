@@ -171,9 +171,10 @@
         <legend>Soru Üretimi — Zorluk Bazlı Model Yönlendirme</legend>
         <p class="note">
             Her hücre boş bırakılırsa ("— varsayılan —") o aşama için yukarıdaki genel ayar
-            (Ai Birincil Sağlayıcı / Curriculum Validator Sağlayıcı / Judge) kullanılır. Listeler,
-            yukarıdaki ilgili "Modelleri Getir" butonlarıyla doldurulan gerçek Anthropic/OpenAI
-            model kataloğundan gelir — önce onları doldurun.
+            (Ai Birincil Sağlayıcı / Curriculum Validator Sağlayıcı / Judge; Bağımsız Çözücü de
+            boşsa Ai Birincil Sağlayıcı'yı kullanır) kullanılır. Listeler, yukarıdaki ilgili
+            "Modelleri Getir" butonlarıyla doldurulan gerçek Anthropic/OpenAI model kataloğundan
+            gelir — önce onları doldurun.
         </p>
         <div class="routing-matrix-wrap">
             <table class="routing-matrix">
@@ -321,7 +322,7 @@
     // §16 zorluk bazlı model yönlendirme — GenerationOrchestrationService.ResolveRoute ile AYNI
     // sağlayıcı/zorluk isim setini kullanır (stage adları config anahtarına, DifficultyLevel adları
     // enum'a birebir eşlenir).
-    private static readonly string[] _stages = ["Generation", "CurriculumValidation", "Judge"];
+    private static readonly string[] _stages = ["Generation", "CurriculumValidation", "Judge", "IndependentSolver"];
     private static readonly (string Key, string Label)[] _difficulties =
     [
         ("VeryEasy", "Çok Kolay"), ("Easy", "Kolay"), ("Medium", "Orta"), ("Hard", "Zor"), ("VeryHard", "İleri Düzey")
@@ -332,6 +333,7 @@
         "Generation" => "Generator",
         "CurriculumValidation" => "Curriculum Validator",
         "Judge" => "Judge",
+        "IndependentSolver" => "Bağımsız Çözücü",
         _ => stage
     };
 

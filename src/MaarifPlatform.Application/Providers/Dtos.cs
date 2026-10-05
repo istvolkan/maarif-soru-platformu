@@ -179,6 +179,25 @@ public sealed record CurriculumAlignmentResult(
     IReadOnlyList<string> Issues,
     AiUsage Usage);
 
+// §61 Independent Solver (Question Intelligence Engine Faz 0) — Generator'ın kendi iddia ettiği
+// cevap GÜVENİLİR kabul edilmez; ayrı (genelde farklı sağlayıcı/model) bir "çözücü" soruyu
+// SIFIRDAN çözer. Request'e BİLEREK Generator'ın CorrectAnswer/Solution'ı DAHİL EDİLMEZ —
+// aksi halde "bağımsız" çözüm olmaz, model sadece verilen cevabı onaylamış olur (bkz.
+// GenerationOrchestrationService'teki karşılaştırma). Answer, Options listesindeki bir şıkkın
+// TAM METNİYLE eşleşmelidir (EvaluateQuestionRequest/GenerateQuestionResult'taki CorrectAnswer
+// ile AYNI konvansiyon) — yalnızca Options.Count>0 olan (çoktan seçmeli biçimli) sorular için
+// anlamlıdır; açık uçlu sorularda serbest metin eşitliği güvenilir bir karşılaştırma sinyali
+// değildir, bu yüzden orkestrasyon katmanı bu adımı yalnızca şıklı sorularda çağırır.
+public sealed record SolveQuestionRequest(
+    string Question,
+    IReadOnlyList<string> Options,
+    string? ModelOverride = null);
+
+public sealed record SolveQuestionResult(
+    string Answer,
+    string Reasoning,
+    AiUsage Usage);
+
 // Soru Çeşitlendir — kullanıcı sağladığı örnek bir soruyu küçük, mantıklı değişikliklerle
 // (sayı/isim/bağlam) çoğaltır. GenerateQuestionRequest'ten bilinçli olarak AYRI: Grade/Subject/
 // LearningOutcome/Grounding YOK — bu akış Türkiye Yüzyılı Maarif Modeli müfredat doğrulamasından

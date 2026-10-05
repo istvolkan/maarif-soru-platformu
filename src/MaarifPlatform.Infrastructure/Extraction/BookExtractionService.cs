@@ -5,6 +5,7 @@ using MaarifPlatform.Application.Storage;
 using MaarifPlatform.Application.Vision;
 using MaarifPlatform.Domain.Entities;
 using MaarifPlatform.Domain.Enums;
+using MaarifPlatform.Infrastructure.Generation;
 using MaarifPlatform.Infrastructure.Persistence;
 using MaarifPlatform.Infrastructure.Vision;
 using Microsoft.EntityFrameworkCore;
@@ -50,7 +51,8 @@ public class BookExtractionService(
     IQuestionSegmenter segmenter,
     IVisionRouter visionRouter,
     IVisionProviderFactory visionProviderFactory,
-    IOptionsMonitor<VisionRoutingOptions> visionRouting)
+    IOptionsMonitor<VisionRoutingOptions> visionRouting,
+    QuestionSimilarityService similarityService)
 {
     public async Task<BookExtractionResult> ExtractAsync(Guid bookId, CancellationToken ct = default)
     {
@@ -139,6 +141,7 @@ public class BookExtractionService(
         var lowConfidenceCount = 0;
         var totalBlocks = 0;
         var questionsByPage = new List<(Question Question, int PageNo)>();
+        var embeddingTargets = new List<(Guid VersionId, string Stem)>();
 
         foreach (var pageNo in blocksByPage.Keys.OrderBy(p => p))
         {
@@ -192,6 +195,11 @@ public class BookExtractionService(
                 db.Questions.Add(question);
                 db.QuestionVersions.Add(version);
                 db.QuestionDnas.Add(dna);
+
+                if (!string.IsNullOrWhiteSpace(block.Stem))
+                {
+                    embeddingTargets.Add((version.Id, block.Stem));
+                }
             }
         }
 
@@ -200,6 +208,20 @@ public class BookExtractionService(
 
         await CaptureOriginalPageImagesAsync(book, questionsByPage, ct);
         await db.SaveChangesAsync(ct);
+
+        // §52 Orijinallik Kontrolü (Question Intelligence Engine Faz 0) — kitaptan çıkarılan
+        // sorular da üretim-zamanı benzerlik havuzuna eklenir (bkz. QuestionSimilarityService),
+        // böylece yeni üretimler yalnızca önceki üretimlere değil GERÇEK KAYNAK METNE karşı da
+        // kontrol edilir. Book.Grade nullable (ör. bazı referans belgelerinde) — dedup havuzu
+        // Grade bazlı bölündüğü için Grade yoksa o soru hiç embed edilmez (GenerationOrchestration-
+        // Service'teki dedup sorgusunun kendisi de her zaman somut bir int Grade ister).
+        if (book.Grade is int grade)
+        {
+            foreach (var (versionId, stem) in embeddingTargets)
+            {
+                await similarityService.RecordAsync(versionId, grade, book.Subject, stem, QuestionEmbeddingSourceKind.Extracted, ct);
+            }
+        }
 
         return new BookExtractionResult(pages.Count, totalBlocks, lowConfidenceCount);
     }

@@ -24,6 +24,10 @@ public interface ILLMProvider
 
     Task<CurriculumAlignmentResult> ValidateCurriculumAlignmentAsync(ValidateCurriculumAlignmentRequest request, CancellationToken ct = default);
 
+    /// <summary>§61 Independent Solver — soruyu Generator'ın cevabından BAĞIMSIZ olarak sıfırdan
+    /// çözer (bkz. SolveQuestionRequest'teki tasarım notu). Yalnızca şıklı sorularda anlamlıdır.</summary>
+    Task<SolveQuestionResult> SolveQuestionAsync(SolveQuestionRequest request, CancellationToken ct = default);
+
     /// <summary>Soru Çeşitlendir — Maarif Modeli müfredat doğrulaması gerektirmeyen, kullanıcının
     /// sağladığı örnek sorudan küçük mantıksal değişikliklerle çoğaltma.</summary>
     Task<VaryQuestionResult> VaryQuestionAsync(VaryQuestionRequest request, CancellationToken ct = default);

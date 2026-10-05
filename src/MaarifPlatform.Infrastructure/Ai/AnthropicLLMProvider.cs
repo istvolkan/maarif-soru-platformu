@@ -26,6 +26,7 @@ public class AnthropicLLMProvider : ILLMProvider
     private const string RecommendRevisionToolName = "submit_revision_recommendation";
     private const string ExtractCurriculumToolName = "submit_curriculum_structure";
     private const string ValidateCurriculumAlignmentToolName = "submit_curriculum_alignment";
+    private const string SolveQuestionToolName = "submit_solution";
     private const string VaryQuestionToolName = "submit_question_variations";
 
     private readonly IOptionsMonitor<AnthropicOptions> _optionsMonitor;
@@ -416,6 +417,88 @@ public class AnthropicLLMProvider : ILLMProvider
             SkillAlignmentScore: input.TryGetValue("skill_alignment_score", out var sas) ? sas.GetInt32() : 0,
             Issues: GetStringArray(input, "issues"),
             Usage: usage);
+    }
+
+    /// <summary>§61 Independent Solver. Generator'ın CorrectAnswer/Solution'ı BİLEREK bu isteğe
+    /// dahil edilmez (bkz. SolveQuestionRequest doc) — soru yalnızca metin+şıklarla sıfırdan
+    /// çözülür, sonuç GenerationOrchestrationService'te Generator'ın cevabıyla karşılaştırılır.</summary>
+    public async Task<SolveQuestionResult> SolveQuestionAsync(SolveQuestionRequest request, CancellationToken ct = default)
+    {
+        var (options, client) = Current();
+        var model = request.ModelOverride ?? options.Model;
+        var parameters = new MessageCreateParams
+        {
+            Model = model,
+            MaxTokens = options.MaxTokens,
+            System = BuildSolveQuestionSystemPrompt(),
+            Tools = [BuildSolveQuestionTool()],
+            ToolChoice = new ToolChoiceTool { Name = SolveQuestionToolName },
+            Messages = [new() { Role = Role.User, Content = BuildSolveQuestionUserContent(request) }],
+            CacheControl = new CacheControlEphemeral(),
+        };
+
+        var stopwatch = Stopwatch.StartNew();
+        var response = await client.Messages.Create(parameters, ct);
+        stopwatch.Stop();
+
+        var toolUse = response.Content
+            .Select(b => b.Value)
+            .OfType<ToolUseBlock>()
+            .FirstOrDefault(b => b.Name == SolveQuestionToolName)
+            ?? throw new InvalidOperationException("Anthropic yanıtında beklenen submit_solution tool_use bloğu bulunamadı.");
+
+        var usage = BuildUsage(response, stopwatch, options, model);
+        var input = toolUse.Input;
+        return new SolveQuestionResult(
+            Answer: input.TryGetValue("answer", out var a) ? a.GetString() ?? "" : "",
+            Reasoning: input.TryGetValue("reasoning", out var r) ? r.GetString() ?? "" : "",
+            Usage: usage);
+    }
+
+    private static Tool BuildSolveQuestionTool() => new()
+    {
+        Name = SolveQuestionToolName,
+        Description = "Soruyu sıfırdan çöz ve vardığın cevabı bildir.",
+        InputSchema = new()
+        {
+            Properties = new Dictionary<string, JsonElement>
+            {
+                ["reasoning"] = Schema("string", "Çözüm adımların, kısa ve net."),
+                ["answer"] = Schema("string",
+                    "Vardığın SONUÇ. Şık listesi verildiyse bu, şıklardan BİRİNİN TAM METNİYLE " +
+                    "harfiyen eşleşmelidir (örn. \"12\" değil, şıkta yazdığı gibi \"12 cm\").")
+            },
+            Required = ["reasoning", "answer"]
+        }
+    };
+
+    internal static string BuildSolveQuestionSystemPrompt() => """
+        Sen bir matematik/fen sorusunu SIFIRDAN çözen bağımsız bir çözücüsün. Sana sorunun
+        metni ve (varsa) şıkları verilecek — DOĞRU CEVAP VERİLMEYECEK, çünkü amaç başka bir
+        modelin iddia ettiği cevabı ONAYLAMAK değil, kendi başına bağımsız bir sonuca ulaşmaktır.
+
+        KURALLAR:
+        1. Soruyu adım adım, kendi başına çöz. Hiçbir dış cevaba güvenme/varsayma.
+        2. Şık listesi verildiyse, vardığın sonucu şıklardan biriyle eşleştir ve o şıkkın TAM
+           METNİNİ "answer" alanına yaz (yeniden ifade etme, harfiyen kopyala).
+        3. Hiçbir şık senin bulduğun sonuca uymuyorsa, yine de en yakın/mantıklı olanı seç ve
+           reasoning'de bu tutarsızlığı belirt.
+        4. Cevabını YALNIZCA submit_solution aracını çağırarak ver.
+        """;
+
+    internal static string BuildSolveQuestionUserContent(SolveQuestionRequest request)
+    {
+        var optionsBlock = request.Options.Count == 0
+            ? "(Şık yok — açık uçlu soru.)"
+            : string.Join("\n", request.Options.Select((o, i) => $"{(char)('A' + i)}) {o}"));
+
+        return $"""
+            SORU:
+            {request.Question}
+
+            ŞIKLAR:
+            {optionsBlock}
+            """;
     }
 
     /// <summary>Soru Çeşitlendir — Maarif Modeli müfredat doğrulaması YAPMAZ (bkz. ILLMProvider'daki

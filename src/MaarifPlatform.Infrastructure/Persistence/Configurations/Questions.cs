@@ -111,9 +111,11 @@ public class QuestionEmbeddingConfiguration : IEntityTypeConfiguration<QuestionE
         b.ToTable("question_embeddings");
         b.HasKey(e => e.Id);
         b.Property(e => e.Subject).HasMaxLength(100).IsRequired();
+        b.Property(e => e.SourceKind).HasConversion<string>().HasMaxLength(20);
         // ReferenceChunkConfiguration'daki 1536 boyut varsayımıyla AYNI — aynı IEmbeddingProvider paylaşılır.
         b.Property(e => e.Embedding).HasColumnType("vector(1536)").IsRequired();
         b.HasIndex(e => new { e.Grade, e.Subject });
+        b.HasIndex(e => e.SourceKind);
         b.HasIndex(e => e.QuestionVersionId).IsUnique();
 
         b.HasOne(e => e.QuestionVersion)

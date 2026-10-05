@@ -95,6 +95,9 @@ public static class DependencyInjection
         services.Configure<Dictionary<string, string?>>("Generation", configuration.GetSection("Generation:Routing"));
         services.Configure<Dictionary<string, string?>>("CurriculumValidation", configuration.GetSection("CurriculumValidation:Routing"));
         services.Configure<Dictionary<string, string?>>("Judge", configuration.GetSection("Judge:Routing"));
+        // §61 Independent Solver (Question Intelligence Engine Faz 0) — Generator/CurriculumValidation/
+        // Judge ile AYNI adlandırılmış-routing deseni, dördüncü bir aşama olarak eklendi.
+        services.Configure<Dictionary<string, string?>>("IndependentSolver", configuration.GetSection("IndependentSolver:Routing"));
 
         services.AddScoped<AnalysisOrchestrationService>();
         services.AddScoped<TransformationOrchestrationService>();

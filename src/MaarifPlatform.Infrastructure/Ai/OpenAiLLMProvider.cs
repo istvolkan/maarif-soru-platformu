@@ -16,6 +16,7 @@ public class OpenAiLLMProvider : ILLMProvider
     private const string GenerateToolName = "submit_generation";
     private const string ExtractCurriculumToolName = "submit_curriculum_structure";
     private const string ValidateCurriculumAlignmentToolName = "submit_curriculum_alignment";
+    private const string SolveQuestionToolName = "submit_solution";
     private const string VaryQuestionToolName = "submit_question_variations";
 
     private readonly IOptionsMonitor<OpenAiOptions> _optionsMonitor;
@@ -205,6 +206,68 @@ public class OpenAiLLMProvider : ILLMProvider
             SkillAlignmentScore: input.TryGetValue("skill_alignment_score", out var sas) ? sas.GetInt32() : 0,
             Issues: GetStringArray(input, "issues"),
             Usage: usage);
+    }
+
+    /// <summary>§61 Independent Solver — prompt/ayrıştırma AnthropicLLMProvider ile PAYLAŞILIR
+    /// (Judge'ın aksine, Solver'ın görevi "aynı soruyu iki sağlayıcıyla yargılayıp karşılaştırmak"
+    /// değil, Generator'dan BAĞIMSIZ bir sağlayıcı/model ile sıfırdan çözmek — prompt paylaşımı
+    /// bu bağımsızlığı bozmaz, Generate/Extract/ValidateAlignment ile aynı gerekçe).</summary>
+    public async Task<SolveQuestionResult> SolveQuestionAsync(SolveQuestionRequest request, CancellationToken ct = default)
+    {
+        var (options, client, model) = Current(request.ModelOverride);
+        var tool = BuildSolveQuestionTool();
+        var responseOptions = new CreateResponseOptions
+        {
+            Model = model,
+            StoredOutputEnabled = false,
+            MaxOutputTokenCount = options.MaxTokens,
+            ToolChoice = ResponseToolChoice.CreateFunctionChoice(SolveQuestionToolName)
+        };
+        responseOptions.Tools.Add(tool);
+
+        List<ResponseItem> messages =
+        [
+            ResponseItem.CreateSystemMessageItem(AnthropicLLMProvider.BuildSolveQuestionSystemPrompt()),
+            ResponseItem.CreateUserMessageItem(AnthropicLLMProvider.BuildSolveQuestionUserContent(request))
+        ];
+
+        var stopwatch = Stopwatch.StartNew();
+        foreach (var message in messages) responseOptions.InputItems.Add(message);
+        ResponseResult completion = await client.CreateResponseAsync(responseOptions, ct);
+        stopwatch.Stop();
+
+        var toolCall = completion.OutputItems.OfType<FunctionCallResponseItem>().FirstOrDefault(t => t.FunctionName == SolveQuestionToolName)
+            ?? throw new InvalidOperationException("OpenAI yanıtında beklenen submit_solution tool_call bulunamadı.");
+
+        var input = ParseToolArguments(toolCall.FunctionArguments);
+        var usage = BuildUsage(completion, stopwatch, model);
+        return new SolveQuestionResult(
+            Answer: input.TryGetValue("answer", out var a) ? a.GetString() ?? "" : "",
+            Reasoning: input.TryGetValue("reasoning", out var r) ? r.GetString() ?? "" : "",
+            Usage: usage);
+    }
+
+    private static ResponseTool BuildSolveQuestionTool()
+    {
+        var schema = new
+        {
+            type = "object",
+            properties = new Dictionary<string, object>
+            {
+                ["reasoning"] = new { type = "string", description = "Çözüm adımların, kısa ve net." },
+                ["answer"] = new
+                {
+                    type = "string",
+                    description = "Vardığın SONUÇ. Şık listesi verildiyse bu, şıklardan BİRİNİN TAM " +
+                        "METNİYLE harfiyen eşleşmelidir."
+                }
+            },
+            required = new[] { "reasoning", "answer" }
+        };
+
+        return CreateFunctionTool(
+            SolveQuestionToolName, "Soruyu sıfırdan çöz ve vardığın cevabı bildir.",
+            BinaryData.FromString(JsonSerializer.Serialize(schema)), strictModeEnabled: false);
     }
 
     /// <summary>Soru Çeşitlendir — prompt/şema/ayrıştırma AnthropicLLMProvider ile PAYLAŞILIR,

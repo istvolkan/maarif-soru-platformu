@@ -217,6 +217,7 @@ public class GenerationOrchestrationService(
             var (curriculumValidatorProvider, curriculumValidatorModel) = ResolveRoute(
                 "CurriculumValidation", item.Difficulty, defaultCurriculumValidatorProviderName);
             var (judgeProvider, judgeModel) = ResolveRoute("Judge", item.Difficulty, aiRouting.CurrentValue.Provider);
+            var (solverProvider, solverModel) = ResolveRoute("IndependentSolver", item.Difficulty, aiRouting.CurrentValue.Provider);
 
             for (var attempt = 1; attempt <= maxAttempts && accepted is null; attempt++)
             {
@@ -355,6 +356,40 @@ public class GenerationOrchestrationService(
                     continue;
                 }
 
+                // §61 Independent Solver — Generator'ın KENDİ iddia ettiği cevabı güvenilir kabul
+                // etmek yerine, ayrı (routing'e göre farklı sağlayıcı/model olabilen) bir "çözücü"
+                // soruyu Generator'ın cevabı/çözümü hiç verilmeden sıfırdan çözer; sonuç uyuşmazsa
+                // slot diğer kalite kapıları gibi regenerate edilir. Yalnızca GERÇEKTEN şıklı
+                // sorularda anlamlı (bkz. SolveQuestionRequest doc) — açık uçlu sorularda serbest
+                // metin eşitliği güvenilir bir sinyal değildir, bu yüzden Options.Count>0 şartı var.
+                if (generated.Options.Count > 0)
+                {
+                    yield return new GenerationProgressEvent(slotNo, blueprint.Count,
+                        $"Soru {slotNo}/{blueprint.Count}: bağımsız çözüm doğrulanıyor…", null, null, null);
+
+                    SolveQuestionResult solveResult;
+                    try
+                    {
+                        solveResult = await solverProvider.SolveQuestionAsync(
+                            new SolveQuestionRequest(generated.Question, generated.Options, solverModel), ct);
+                    }
+                    catch (Exception ex)
+                    {
+                        attemptMessages.Add($"Bağımsız çözüm hatası: {ex.Message}");
+                        continue;
+                    }
+
+                    db.AiRuns.Add(BuildAiRun(null, PipelineStage.IndependentSolve, solveResult.Usage, solverProvider.Name));
+
+                    if (!string.Equals(solveResult.Answer.Trim(), generated.CorrectAnswer.Trim(), StringComparison.Ordinal))
+                    {
+                        attemptMessages.Add(
+                            $"Bağımsız çözücü farklı bir sonuca ulaştı (Generator: \"{generated.CorrectAnswer}\", " +
+                            $"Çözücü: \"{solveResult.Answer}\") — cevap hatalı olabilir.");
+                        continue;
+                    }
+                }
+
                 yield return new GenerationProgressEvent(slotNo, blueprint.Count,
                     $"Soru {slotNo}/{blueprint.Count}: benzerlik kontrol ediliyor…", null, null, null);
 
@@ -362,8 +397,14 @@ public class GenerationOrchestrationService(
                     request.Grade, request.Subject, generated.Question, generationRouting.SimilarityRejectThreshold, ct);
                 if (similarity.IsDuplicate)
                 {
+                    // §52 Orijinallik Kontrolü: hangi havuza (kaynak kitap mı, önceki üretim mi)
+                    // çok benzediği ayrı belirtilir — kaynak kitaba benzerlik daha ciddi bir
+                    // kopyalama riskidir (bkz. QuestionEmbeddingSourceKind).
+                    var sourceDescription = similarity.MostSimilarSourceKind == QuestionEmbeddingSourceKind.Extracted
+                        ? "kaynak kitaplardan çıkarılmış bir soruya"
+                        : "havuzdaki daha önce üretilmiş bir soruya";
                     attemptMessages.Add(
-                        $"Havuzdaki mevcut bir soruya çok benziyor (benzerlik %{similarity.MostSimilarScore * 100:F0}) — " +
+                        $"{sourceDescription} çok benziyor (benzerlik %{similarity.MostSimilarScore * 100:F0}) — " +
                         "yalnızca sayı/isim değiştirilmiş bir kopya olabilir.");
                     continue;
                 }
@@ -414,7 +455,8 @@ public class GenerationOrchestrationService(
             }
 
             var (question, version) = await PersistGeneratedQuestionAsync(request, item, accepted, acceptedSvg, llmProvider.Name, ct);
-            await similarityService.RecordAsync(version.Id, request.Grade, request.Subject, accepted.Question, ct);
+            await similarityService.RecordAsync(
+                version.Id, request.Grade, request.Subject, accepted.Question, QuestionEmbeddingSourceKind.Generated, ct);
 
             succeeded++;
             yield return new GenerationProgressEvent(slotNo, blueprint.Count,

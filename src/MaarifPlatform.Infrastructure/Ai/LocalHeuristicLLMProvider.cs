@@ -237,6 +237,23 @@ public class LocalHeuristicLLMProvider : ILLMProvider
         return Task.FromResult(result);
     }
 
+    /// <summary>§61 Independent Solver mock. Gerçek çözüm YAPMAZ — şık listesi verildiyse ilk
+    /// şıkkı "çözüm" olarak döner. GenerateQuestionAsync'teki mock DA her zaman options[0]'ı
+    /// CorrectAnswer yapıyor (bkz. yukarısı) — bu bilinçli: mock solver mock generator'la HER
+    /// ZAMAN uyuşmalı, aksi halde Ai:Provider=Local ile yerel geliştirme her seferinde sahte bir
+    /// "cevap uyuşmazlığı" ile sonsuz regenerate'e düşerdi. Gerçek uyuşmazlık tespiti için
+    /// Ai:Provider=Anthropic/OpenAI gerekir.</summary>
+    public Task<SolveQuestionResult> SolveQuestionAsync(SolveQuestionRequest request, CancellationToken ct = default)
+    {
+        var answer = request.Options.Count > 0 ? request.Options[0] : "[MOCK] Gerçek çözüm üretilmedi.";
+        var result = new SolveQuestionResult(
+            Answer: answer,
+            Reasoning: "[MOCK] Gerçek bağımsız çözüm yapılmadı.",
+            Usage: new AiUsage("local-heuristic", "mock-v1", EstimateTokens(request), 60, 0m, 5));
+
+        return Task.FromResult(result);
+    }
+
     /// <summary>Gerçek "mantıksal çıkarım" yapmaz — kaynak metindeki sayıları basitçe kaydırır,
     /// geri kalanı aynen tekrarlar. Gerçek çeşitlendirme için Ai:Provider=Anthropic/OpenAI gerekir
     /// (bkz. AnthropicLLMProvider.BuildVaryQuestionSystemPrompt).</summary>
@@ -283,4 +300,7 @@ public class LocalHeuristicLLMProvider : ILLMProvider
 
     private static int EstimateTokens(GenerateQuestionRequest request) =>
         (request.Theme.Length + request.Context.Length) / 4;
+
+    private static int EstimateTokens(SolveQuestionRequest request) =>
+        (request.Question.Length + request.Options.Sum(o => o.Length)) / 4;
 }

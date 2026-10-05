@@ -44,6 +44,18 @@ public enum QuestionVersionStage
     Final
 }
 
+/// <summary>§52 Orijinallik Kontrolü (Question Intelligence Engine Faz 0) —
+/// <see cref="Entities.QuestionEmbedding"/> havuzunun hangi kaynaktan geldiğini ayırt eder.
+/// Eskiden bu havuz yalnızca AI-ÜRETİLEN sorulardan oluşuyordu (yalnızca kendi aralarında
+/// tekrar kontrolü); artık kitaptan ÇIKARILAN gerçek kaynak sorular da aynı havuza eklenir ki
+/// yeni üretimler kaynak metne karşı da (yalnızca önceki üretimlere karşı değil) kontrol
+/// edilebilsin.</summary>
+public enum QuestionEmbeddingSourceKind
+{
+    Generated,
+    Extracted
+}
+
 /// <summary>Rubrik puanına göre dönüşüm kararı, bkz. tasarım dokümanı §5/§E.</summary>
 public enum TransformationLevel
 {
@@ -105,7 +117,8 @@ public enum PipelineStage
     Judge,
     Generation,
     CurriculumExtraction,
-    CurriculumValidation
+    CurriculumValidation,
+    IndependentSolve
 }
 
 /// <summary>Curriculum yapı elemanlarının (Theme/LearningOutcome/ContentFramework/
