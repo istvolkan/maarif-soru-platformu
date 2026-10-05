@@ -8,6 +8,8 @@ using Microsoft.EntityFrameworkCore;
 using QuestPDF.Fluent;
 using QuestPDF.Helpers;
 using QuestPDF.Infrastructure;
+using SkiaSharp;
+using Svg.Skia;
 
 namespace MaarifPlatform.Infrastructure.Export;
 
@@ -94,7 +96,16 @@ public class BookPdfExportService(MaarifDbContext db, IBookFileStorage storage)
                     await using var visualStream = await storage.OpenReadAsync(visualAsset.StorageUri, ct);
                     using var buffer = new MemoryStream();
                     await visualStream.CopyToAsync(buffer, ct);
-                    visualImage = buffer.ToArray();
+                    var rawBytes = buffer.ToArray();
+                    // VisualSpecRenderer (Soru Üret'teki Görsel Kullanımı) SVG üretir
+                    // (ContentType="image/svg+xml"), ama QuestPDF 2024.10.3'ün Image() API'si
+                    // yalnızca raster formatları (PNG/JPEG) çözebiliyor — SVG verildiğinde
+                    // "Cannot decode the provided image" ile patlıyordu (gerçek kullanıcı raporu,
+                    // 2026-10; bu sorular daha önce export'tan tamamen atlandığı için gizli kalmıştı).
+                    // SVG'yi PDF'e gömmeden önce rasterize ediyoruz.
+                    visualImage = visualAsset.ContentType == "image/svg+xml"
+                        ? RasterizeSvg(rawBytes)
+                        : rawBytes;
                 }
             }
 
@@ -175,6 +186,31 @@ public class BookPdfExportService(MaarifDbContext db, IBookFileStorage storage)
         });
 
         return document.GeneratePdf();
+    }
+
+    // Vektör boyutu yok (viewport/CullRect yoksa SVG bozuk demektir) — 2x ölçekte rasterize
+    // edilir ki PDF'te büyütüldüğünde pikselleşmesin.
+    private static byte[] RasterizeSvg(byte[] svgBytes)
+    {
+        using var svg = new SKSvg();
+        using var stream = new MemoryStream(svgBytes);
+        svg.Load(stream);
+        var picture = svg.Picture ?? throw new InvalidOperationException("SVG içeriği çözümlenemedi.");
+
+        const float scale = 2f;
+        var width = (int)Math.Ceiling(picture.CullRect.Width * scale);
+        var height = (int)Math.Ceiling(picture.CullRect.Height * scale);
+        using var bitmap = new SKBitmap(Math.Max(width, 1), Math.Max(height, 1));
+        using (var canvas = new SKCanvas(bitmap))
+        {
+            canvas.Clear(SKColors.White);
+            canvas.Scale(scale);
+            canvas.DrawPicture(picture);
+        }
+
+        using var image = SKImage.FromBitmap(bitmap);
+        using var data = image.Encode(SKEncodedImageFormat.Png, 100);
+        return data.ToArray();
     }
 
     private const int RevisionScoreThreshold = 50;
