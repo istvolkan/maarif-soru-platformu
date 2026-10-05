@@ -1,5 +1,6 @@
 using System.Text.Json;
 using MaarifPlatform.Application.Extraction;
+using MaarifPlatform.Application.Intelligence;
 using MaarifPlatform.Application.Providers;
 using MaarifPlatform.Application.Rubric;
 using MaarifPlatform.Domain.Entities;
@@ -265,6 +266,9 @@ public class AnalysisOrchestrationService(
             ExpectedSolutionSteps = result.ExpectedSolutionSteps?.ToString(),
             AiEstimatedStudentTimeMinutes = result.AiEstimatedStudentTimeMinutes,
             MaarifAlignmentScore = rubric.WeightedScore,
+            // Faz 4 (Question Intelligence Engine) — §48 havuz etiketi, deterministik (bkz.
+            // QuestionPoolClassifier). Hiçbir soru bu etikete göre silinmez/gizlenmez.
+            PoolClassification = QuestionPoolClassifier.Classify(rubric.WeightedScore),
             AlignmentIssuesJson = JsonSerializer.Serialize(rubric.Issues),
             TransformationLevel = rubric.Level,
             QualityFlagsJson = JsonSerializer.Serialize(

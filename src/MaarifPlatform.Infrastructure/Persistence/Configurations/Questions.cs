@@ -56,6 +56,7 @@ public class QuestionDnaConfiguration : IEntityTypeConfiguration<QuestionDna>
         b.HasKey(e => e.Id);
         b.Property(e => e.Difficulty).HasConversion<string>().HasMaxLength(20);
         b.Property(e => e.TransformationLevel).HasConversion<string>().HasMaxLength(30);
+        b.Property(e => e.PoolClassification).HasConversion<string>().HasMaxLength(20);
 
         foreach (var jsonProp in new[]
         {
@@ -77,6 +78,8 @@ public class QuestionDnaConfiguration : IEntityTypeConfiguration<QuestionDna>
         // Vision Router'ın "requires_visual=true, henüz işlenmemiş" sorgusu bu indekse dayanır.
         b.HasIndex(e => e.RequiresVisual);
         b.HasIndex(e => e.ArchetypeId);
+        // Faz 6'daki havuz-karışımlı blueprint sorgularının dayanacağı indeks (bkz. GenerationRoutingOptions.MaarifWeight).
+        b.HasIndex(e => e.PoolClassification);
 
         // SetNull: bir archetype silinirse (ör. ileride admin bir temizlik yaparsa) üye sorular
         // kaybolmaz, yalnızca kümesiz kalır.

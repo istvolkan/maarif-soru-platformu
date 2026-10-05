@@ -49,6 +49,11 @@ public class QuestionDna : Entity
     public string? AlignmentIssuesJson { get; set; }
     public TransformationLevel? TransformationLevel { get; set; }
 
+    // §41/§48 Soru Havuzu (Question Intelligence Engine Faz 4) — MaarifAlignmentScore'dan
+    // deterministik türetilir (bkz. QuestionPoolClassifier), yalnızca bir ETİKETTİR; hiçbir soru
+    // bu sınıfa göre silinmez/gizlenmez.
+    public QuestionPoolClassification? PoolClassification { get; set; }
+
     // §45/§54 Question Archetype (Question Intelligence Engine Faz 3) — bu sorunun deterministik
     // en-yakın-komşu kümelemeyle atandığı soyut soru kalıbı. Null = henüz DNA analizi (Faz 2)
     // yapılmamış ya da kümeleme için yeterli veri yoktu.

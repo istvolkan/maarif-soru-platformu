@@ -44,6 +44,18 @@ public enum QuestionVersionStage
     Final
 }
 
+/// <summary>§41/§48 Soru Havuzu sınıflandırması (Question Intelligence Engine Faz 4) —
+/// MaarifAlignmentScore'un §41'deki 5 bandını (0-29/30-49/50-69/70-84/85-100) §48'in 3 mantıksal
+/// havuzuna deterministik olarak daraltır (bkz. QuestionPoolClassifier). BİLİNÇLİ TASARIM: bu
+/// yalnızca bir ETİKETTİR — hiçbir soru bu sınıflandırmaya göre silinmez/gizlenmez, Traditional
+/// bir soru da (temel işlem becerisi/kavram bilgisi/geleneksel sınav hazırlığı için) değerlidir.</summary>
+public enum QuestionPoolClassification
+{
+    Traditional,
+    Hybrid,
+    MaarifAligned
+}
+
 /// <summary>§52 Orijinallik Kontrolü (Question Intelligence Engine Faz 0) —
 /// <see cref="Entities.QuestionEmbedding"/> havuzunun hangi kaynaktan geldiğini ayırt eder.
 /// Eskiden bu havuz yalnızca AI-ÜRETİLEN sorulardan oluşuyordu (yalnızca kendi aralarında

@@ -164,6 +164,16 @@
         <div class="field"><label>Maks. Yeniden Üretim Denemesi</label><InputNumber @bind-Value="_form.GenerationMaxRegenerationAttempts" /></div>
         <div class="field"><label>Benzerlik Reddetme Eşiği (0-1)</label><InputNumber @bind-Value="_form.GenerationSimilarityRejectThreshold" step="0.01" /></div>
         <div class="field"><label>Maks. Soru Adedi (tek seferde)</label><InputNumber @bind-Value="_form.GenerationMaxQuestionCount" /></div>
+        <div class="field">
+            <label>Maarif Modeli Ağırlığı (%)</label>
+            <InputNumber @bind-Value="_form.GenerationMaarifWeight" min="0" max="100" />
+        </div>
+        <p class="note">
+            Maarif Modeli Ağırlığı: üretim sırasında "Maarif Modeli Uyumlu" örnek/pattern havuzuna
+            verilen öncelik (0-100). Kullanıcıya bir seçenek olarak SUNULMAZ — sistem her üretimde
+            bu ağırlığı otomatik uygular. Geleneksel sorular asla silinmez, yalnızca daha az
+            önceliklendirilir. (Bu ayarın üretim zamanı tüketicisi henüz tamamlanmadı — şu an yalnızca kaydedilir.)
+        </p>
         <p class="note">Domain/matematik doğruluğu ve çapraz-model consensus için yukarıdaki Judge ayarları kullanılır — Soru Üret pipeline'ı ayrı bir Judge kurmaz.</p>
     </fieldset>
 
@@ -371,6 +381,7 @@
         _form.GenerationMaxRegenerationAttempts = Configuration.GetValue<int?>("Generation:MaxRegenerationAttempts") ?? 2;
         _form.GenerationSimilarityRejectThreshold = Configuration.GetValue<double?>("Generation:SimilarityRejectThreshold") ?? 0.92;
         _form.GenerationMaxQuestionCount = Configuration.GetValue<int?>("Generation:MaxQuestionCount") ?? 50;
+        _form.GenerationMaarifWeight = Configuration.GetValue<int?>("Generation:MaarifWeight") ?? 70;
 
         _form.EmbeddingsProvider = Configuration["Embeddings:Provider"] ?? "Local";
         _form.EmbeddingsModel = Configuration["Embeddings:OpenAI:Model"] ?? "text-embedding-3-small";
@@ -544,6 +555,7 @@
             Set("Generation:MaxRegenerationAttempts", _form.GenerationMaxRegenerationAttempts?.ToString());
             Set("Generation:SimilarityRejectThreshold", _form.GenerationSimilarityRejectThreshold?.ToString(System.Globalization.CultureInfo.InvariantCulture));
             Set("Generation:MaxQuestionCount", _form.GenerationMaxQuestionCount?.ToString());
+            Set("Generation:MaarifWeight", _form.GenerationMaarifWeight?.ToString());
 
             Set("Embeddings:Provider", _form.EmbeddingsProvider);
             Set("Embeddings:OpenAI:Model", _form.EmbeddingsModel);
@@ -599,6 +611,7 @@
         public int? GenerationMaxRegenerationAttempts { get; set; }
         public double? GenerationSimilarityRejectThreshold { get; set; }
         public int? GenerationMaxQuestionCount { get; set; }
+        public int? GenerationMaarifWeight { get; set; }
 
         /// <summary>Anahtar "{Stage}:{DifficultyKey}" (ör. "Generation:Hard"), değer
         /// "Sağlayıcı:Model" (ör. "OpenAI:gpt-6-luna") ya da hücre yoksa boş/eksik = varsayılan.</summary>
