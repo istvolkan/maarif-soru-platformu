@@ -337,9 +337,24 @@ public class GenerationOrchestrationService(
 
                 if (!alignment.MeasuresProcessComponent || alignment.LearningOutcomeAlignmentScore < 50)
                 {
+                    // 2026-10 kullanıcı raporu: eski mesaj HER İKİ reddetme nedenini ("süreç
+                    // bileşenini ölçmüyor" VE "kazanım skoru düşük") TEK bir cümlede skor
+                    // numarasıyla birleştiriyordu — skor zaten 50'nin ÜZERİNDEYKEN (ör. 55/100)
+                    // yalnızca MeasuresProcessComponent=false yüzünden reddedilmiş bir deneme de
+                    // "skor 55/100 yetersiz" gibi YANILTICI görünüyordu (asıl neden skor değil,
+                    // süreç bileşeninin hiç ölçülmemiş olmasıydı). Artık hangi koşulun GERÇEKTEN
+                    // tetiklediği ayrı ayrı belirtiliyor.
+                    var reasons = new List<string>();
+                    if (!alignment.MeasuresProcessComponent)
+                    {
+                        reasons.Add("soru, hedeflenen süreç bileşenini gerçekten ÖLÇMÜYOR (yalnızca yüzeysel olarak ilgili).");
+                    }
+                    if (alignment.LearningOutcomeAlignmentScore < 50)
+                    {
+                        reasons.Add($"kazanım uyum skoru yetersiz ({alignment.LearningOutcomeAlignmentScore}/100, en az 50 gerekir).");
+                    }
                     attemptMessages.Add(
-                        $"Kazanım/süreç bileşeni uyumu yetersiz (skor {alignment.LearningOutcomeAlignmentScore}/100)." +
-                        (alignment.Issues.Count > 0 ? " " + string.Join(" ", alignment.Issues) : ""));
+                        string.Join(" ", reasons) + (alignment.Issues.Count > 0 ? " " + string.Join(" ", alignment.Issues) : ""));
                     continue;
                 }
 
@@ -637,8 +652,12 @@ public class GenerationOrchestrationService(
 
     private async Task<Book> FindOrCreatePlaceholderBookAsync(int grade, string subject, CancellationToken ct)
     {
+        // 2026-10'dan itibaren aynı (Grade,Subject) için İKİNCİ bir "Generated" kitap ailesi daha
+        // var (Maarif Uyumlu onaylılar, bkz. Pool.razor) — bu yüzden SourceType+Grade+Subject
+        // ARTIK TEK BAŞINA yeterli değil, TAM BAŞLIK da eşleşmeli (bkz. GeneratedBookNaming doc'u).
+        var title = GeneratedBookNaming.GeneralPoolTitle(grade, subject);
         var existing = await db.Books.FirstOrDefaultAsync(
-            b => b.SourceType == SourceType.Generated && b.Grade == grade && b.Subject == subject, ct);
+            b => b.Title == title && b.SourceType == SourceType.Generated && b.Grade == grade && b.Subject == subject, ct);
         if (existing is not null)
         {
             return existing;
@@ -646,7 +665,7 @@ public class GenerationOrchestrationService(
 
         var book = new Book
         {
-            Title = $"AI Üretilen Sorular — {grade}. Sınıf {subject}",
+            Title = title,
             Grade = grade,
             Subject = subject,
             SourceType = SourceType.Generated,

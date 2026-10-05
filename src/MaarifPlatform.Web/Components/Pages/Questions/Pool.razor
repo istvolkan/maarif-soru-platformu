@@ -3,6 +3,8 @@
 @inject MaarifPlatform.Web.Security.OperationGuard Guard
 @attribute [Authorize(Policy = "QuestionPoolAccess")]
 @using System.Text.Json
+@using MaarifPlatform.Application.Intelligence
+@using MaarifPlatform.Domain.Entities
 @using MaarifPlatform.Domain.Enums
 @using MaarifPlatform.Infrastructure.Persistence
 @using Microsoft.EntityFrameworkCore
@@ -53,8 +55,12 @@ else
                 @q.QuestionText
                 @if (q.MaarifAlignmentScore is int score)
                 {
-                    <span class="pool-alignment-badge @AlignmentBadgeClass(q.PoolClassification)">
-                        @AlignmentBadgeLabel(q.PoolClassification) (@score/100)
+                    // 2026-10 kullanıcı kararı: "Yeşil M" / "Kırmızı M" ikonu — Hybrid/Traditional
+                    // görsel olarak TEK bir "uyumlu değil" (kırmızı) durumuna indirgenir, ama
+                    // başlıkta (title) tam bant + sayısal puan hâlâ görünür (detay isteyen için).
+                    <span class="pool-alignment-icon @(IsMaarifAligned(q.PoolClassification) ? "pool-alignment-icon-aligned" : "pool-alignment-icon-low")"
+                          title="@($"{AlignmentBadgeLabel(q.PoolClassification)} ({score}/100)")">
+                        M
                     </span>
                 }
             </div>
@@ -136,10 +142,13 @@ else
     .pool-meta { font-size: 0.85rem; color: var(--z-muted); margin-bottom: 0.75rem; }
     .pool-solution { background: var(--z-bg, #f7f7f7); border-radius: var(--z-radius); padding: 0.75rem 1rem; margin-bottom: 0.75rem; font-size: 0.92rem; }
     .pool-toolbar-note { font-size: 0.82rem; margin: 0.4rem 0 0 0; }
-    .pool-alignment-badge { display: inline-block; margin-left: 0.6rem; padding: 0.15rem 0.5rem; border-radius: 999px; font-size: 0.72rem; font-weight: 700; vertical-align: middle; }
-    .pool-alignment-badge-high { background: #e6f4ea; color: #1e7a34; }
-    .pool-alignment-badge-mid { background: #fff4e0; color: #8a5a00; }
-    .pool-alignment-badge-low { background: #fde8e8; color: #b42318; }
+    .pool-alignment-icon {
+        display: inline-flex; align-items: center; justify-content: center;
+        width: 1.4rem; height: 1.4rem; margin-left: 0.5rem; border-radius: 50%;
+        font-size: 0.85rem; font-weight: 800; vertical-align: middle; cursor: help;
+    }
+    .pool-alignment-icon-aligned { background: #e6f4ea; color: #1e7a34; border: 1.5px solid #1e7a34; }
+    .pool-alignment-icon-low { background: #fde8e8; color: #b42318; border: 1.5px solid #b42318; }
     .pool-alignment-warning { color: #b42318; font-weight: 600; }
 </style>
 
@@ -237,13 +246,30 @@ else
         await SetStatusAsync(questionId, QuestionStatus.Rejected);
     }
 
-    private static string AlignmentBadgeClass(QuestionPoolClassification? classification) => classification switch
+    /// <summary>2026-10 kullanıcı kararı — bkz. GeneratedBookNaming doc'u. DİKKAT: bu kitabı aynı
+    /// SaveChangesAsync çağrısından önce birden fazla kez oluşturmak İSTEMEDEN YİNELENEN kitaplar
+    /// doğurur (kaydedilmemiş Add'ler yeni bir db sorgusuna yansımaz) — çağıran taraf aynı
+    /// (Grade,Subject) için BİR KEZ çağırıp sonucu önbelleğe almalıdır (bkz. ApproveAllAsync).</summary>
+    private static async Task<Guid> GetOrCreateMaarifAlignedBookIdAsync(MaarifDbContext db, int grade, string subject)
     {
-        QuestionPoolClassification.MaarifAligned => "pool-alignment-badge-high",
-        QuestionPoolClassification.Hybrid => "pool-alignment-badge-mid",
-        QuestionPoolClassification.Traditional => "pool-alignment-badge-low",
-        _ => ""
-    };
+        var title = GeneratedBookNaming.MaarifAlignedTitle(grade, subject);
+        var existing = await db.Books.FirstOrDefaultAsync(b => b.Title == title && b.SourceType == SourceType.Generated);
+        if (existing is not null)
+        {
+            return existing.Id;
+        }
+
+        var book = new Book
+        {
+            Title = title, Grade = grade, Subject = subject,
+            SourceType = SourceType.Generated, StorageUri = string.Empty
+        };
+        db.Books.Add(book);
+        return book.Id;
+    }
+
+    private static bool IsMaarifAligned(QuestionPoolClassification? classification) =>
+        classification == QuestionPoolClassification.MaarifAligned;
 
     private static string AlignmentBadgeLabel(QuestionPoolClassification? classification) => classification switch
     {
@@ -267,6 +293,18 @@ else
             var question = await db.Questions.FirstAsync(q => q.Id == questionId);
             question.Status = status;
             question.UpdatedAt = DateTimeOffset.UtcNow;
+
+            // 2026-10 kullanıcı kararı: onaylanan Maarif Uyumlu bir soru, ayrı bir "Maarif Uyumlu
+            // AI Soruları" kitapçığına TAŞINIR (BookId değiştirilir) — böylece bu kitap zaten var
+            // olan BookPdfExportService ile AYRI bir PDF olarak dışa aktarılabilir. Uyumlu OLMAYAN
+            // onaylı sorular genel havuz kitabında KALIR (taşınmaz) — yalnızca Maarif Uyumlu'nun
+            // kendi kitapçığı var, bu özelliğin istendiği gibi.
+            var row = _questions!.FirstOrDefault(q => q.Id == questionId);
+            if (status == QuestionStatus.EditorApproved && row is not null && IsMaarifAligned(row.PoolClassification))
+            {
+                question.BookId = await GetOrCreateMaarifAlignedBookIdAsync(db, row.Grade, row.Subject);
+            }
+
             await db.SaveChangesAsync();
             _message = status == QuestionStatus.EditorApproved ? "Soru onaylandı." : "Soru reddedildi.";
         }
@@ -293,16 +331,33 @@ else
 
         try
         {
-            var ids = (onlyMaarifAligned
-                    ? _questions!.Where(q => q.PoolClassification == QuestionPoolClassification.MaarifAligned)
-                    : _questions!)
-                .Select(q => q.Id)
-                .ToList();
+            var rows = onlyMaarifAligned
+                ? _questions!.Where(q => q.PoolClassification == QuestionPoolClassification.MaarifAligned).ToList()
+                : _questions!;
+            var ids = rows.Select(q => q.Id).ToList();
             var questions = await db.Questions.Where(q => ids.Contains(q.Id)).ToListAsync();
+
+            // Aynı (Grade,Subject) kombinasyonu bu döngüde birden fazla kez geçebileceği için
+            // (bkz. GetOrCreateMaarifAlignedBookIdAsync doc'u — kaydedilmemiş Add'ler yeni bir
+            // sorguya YANSIMAZ) kitap id'si BİR KEZ çözülüp burada önbelleğe alınır, aksi halde
+            // aynı sınıf/ders için birden fazla yinelenen "Maarif Uyumlu" kitabı oluşurdu.
+            var maarifBookIdCache = new Dictionary<(int Grade, string Subject), Guid>();
             foreach (var question in questions)
             {
                 question.Status = QuestionStatus.EditorApproved;
                 question.UpdatedAt = DateTimeOffset.UtcNow;
+
+                var row = rows.First(q => q.Id == question.Id);
+                if (IsMaarifAligned(row.PoolClassification))
+                {
+                    var key = (row.Grade, row.Subject);
+                    if (!maarifBookIdCache.TryGetValue(key, out var bookId))
+                    {
+                        bookId = await GetOrCreateMaarifAlignedBookIdAsync(db, row.Grade, row.Subject);
+                        maarifBookIdCache[key] = bookId;
+                    }
+                    question.BookId = bookId;
+                }
             }
             await db.SaveChangesAsync();
             _message = questions.Count == 0
