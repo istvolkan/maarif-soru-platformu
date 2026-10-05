@@ -78,6 +78,22 @@ public class LocalHeuristicLLMProvider : ILLMProvider
         return Task.FromResult(result);
     }
 
+    /// <summary>§60 LLM-B mock. Gerçek yapısal analiz YAPMAZ — şık sayısından kaba bir tahmin
+    /// üretir; borunun (AnalysisOrchestrationService→QuestionDna.ExtensionsJson eşlemesi) anahtar
+    /// gerektirmeden test edilebilmesi içindir.</summary>
+    public Task<AnalyzeQuestionDnaResult> AnalyzeQuestionDnaAsync(AnalyzeQuestionDnaRequest request, CancellationToken ct = default)
+    {
+        var result = new AnalyzeQuestionDnaResult(
+            QuestionArchetype: "[MOCK] gerçek sınıflandırma yapılmadı",
+            ReasoningPattern: request.Options.Count > 0 ? ["READ", "COMPUTE", "SELECT"] : ["READ", "COMPUTE"],
+            MisconceptionTargets: ["[MOCK] gerçek analiz yapılmadı"],
+            DistractorLogic: request.Options.Count > 0 ? ["[MOCK] gerçek analiz yapılmadı"] : [],
+            AbstractionLevel: "[MOCK] Belirlenemedi",
+            Usage: new AiUsage("local-heuristic", "mock-v1", EstimateTokens(request), 60, 0m, 5));
+
+        return Task.FromResult(result);
+    }
+
     public Task<TransformQuestionResult> TransformQuestionAsync(TransformQuestionRequest request, CancellationToken ct = default)
     {
         var options = new List<string> { "A seçeneği", "B seçeneği", "C seçeneği", "D seçeneği" };
@@ -313,5 +329,8 @@ public class LocalHeuristicLLMProvider : ILLMProvider
         (request.Theme.Length + request.Context.Length) / 4;
 
     private static int EstimateTokens(SolveQuestionRequest request) =>
+        (request.Question.Length + request.Options.Sum(o => o.Length)) / 4;
+
+    private static int EstimateTokens(AnalyzeQuestionDnaRequest request) =>
         (request.Question.Length + request.Options.Sum(o => o.Length)) / 4;
 }

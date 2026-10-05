@@ -90,6 +90,9 @@ public class OpenAiLLMProvider : ILLMProvider
     public Task<AnalyzeQuestionResult> AnalyzeQuestionAsync(AnalyzeQuestionRequest request, CancellationToken ct = default)
         => throw new NotImplementedException("OpenAiLLMProvider şu an yalnızca Judge ikincil sağlayıcısı olarak kullanılıyor (bkz. Sprint 10); Analyze implemente edilmedi.");
 
+    public Task<AnalyzeQuestionDnaResult> AnalyzeQuestionDnaAsync(AnalyzeQuestionDnaRequest request, CancellationToken ct = default)
+        => throw new NotImplementedException("OpenAiLLMProvider şu an yalnızca Judge ikincil sağlayıcısı olarak kullanılıyor (bkz. Sprint 10); AnalyzeQuestionDna implemente edilmedi.");
+
     public Task<TransformQuestionResult> TransformQuestionAsync(TransformQuestionRequest request, CancellationToken ct = default)
         => throw new NotImplementedException("OpenAiLLMProvider şu an yalnızca Judge ikincil sağlayıcısı olarak kullanılıyor (bkz. Sprint 10); Transform implemente edilmedi.");
 

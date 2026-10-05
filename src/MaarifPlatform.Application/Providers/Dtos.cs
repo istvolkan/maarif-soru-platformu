@@ -192,6 +192,27 @@ public sealed record CurriculumAlignmentResult(
     IReadOnlyList<string> Issues,
     AiUsage Usage);
 
+// §43/§44/§60 LLM-B: Question DNA Analysis (Question Intelligence Engine Faz 2) — LLM-A'nın
+// (AnalyzeQuestionAsync) curriculum-eşleme/rubrik rolünden BİLİNÇLİ OLARAK AYRI bir ikinci analiz
+// çağrısı: sorunun metnini değil, sorunun ARKASINDAKİ SOYUT YAPIYI ("öğrenciyi nasıl
+// düşündürüyor") çıkarır (bkz. §44). Bu alanların henüz gerçek migration'a geçirilmemiş olması
+// BİLİNÇLİ bir tasarım kararı — şekli 1-2 kitap ingestion döngüsünde doğrulanana kadar
+// QuestionDna.ExtensionsJson'da saklanır (bkz. AnalysisOrchestrationService ve ExtensionsJson'ın
+// zaten revisionSuggestion için kullanıldığı mevcut konvansiyon).
+public sealed record AnalyzeQuestionDnaRequest(
+    string Question,
+    IReadOnlyList<string> Options,
+    string? CorrectAnswer,
+    string? ModelOverride = null);
+
+public sealed record AnalyzeQuestionDnaResult(
+    string? QuestionArchetype,
+    IReadOnlyList<string> ReasoningPattern,
+    IReadOnlyList<string> MisconceptionTargets,
+    IReadOnlyList<string> DistractorLogic,
+    string? AbstractionLevel,
+    AiUsage Usage);
+
 // §61 Independent Solver (Question Intelligence Engine Faz 0) — Generator'ın kendi iddia ettiği
 // cevap GÜVENİLİR kabul edilmez; ayrı (genelde farklı sağlayıcı/model) bir "çözücü" soruyu
 // SIFIRDAN çözer. Request'e BİLEREK Generator'ın CorrectAnswer/Solution'ı DAHİL EDİLMEZ —

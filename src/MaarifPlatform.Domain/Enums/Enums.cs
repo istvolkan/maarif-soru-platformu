@@ -118,7 +118,8 @@ public enum PipelineStage
     Generation,
     CurriculumExtraction,
     CurriculumValidation,
-    IndependentSolve
+    IndependentSolve,
+    DnaAnalysis
 }
 
 /// <summary>Curriculum yapı elemanlarının (Theme/LearningOutcome/ContentFramework/

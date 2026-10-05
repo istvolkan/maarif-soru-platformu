@@ -20,6 +20,7 @@ namespace MaarifPlatform.Infrastructure.Ai;
 public class AnthropicLLMProvider : ILLMProvider
 {
     private const string ToolName = "submit_analysis";
+    private const string DnaAnalysisToolName = "submit_dna_analysis";
     private const string TransformToolName = "submit_transformation";
     private const string EvaluateToolName = "submit_evaluation";
     private const string GenerateToolName = "submit_generation";
@@ -90,6 +91,131 @@ public class AnthropicLLMProvider : ILLMProvider
 
         var usage = BuildUsage(response, stopwatch, options);
         return ParseResult(toolUse.Input, usage);
+    }
+
+    /// <summary>§43/§44/§60 LLM-B: Question DNA Analysis — AnalyzeQuestionAsync'ten (LLM-A) ayrı
+    /// bir çağrı, soruyu YENİDEN gönderir (aynı isteğin içine gömmek yerine) çünkü iki rol
+    /// kavramsal olarak bağımsızdır (bkz. ILLMProvider doc) ve ileride farklı sağlayıcılara
+    /// yönlendirilebilir olmalıdır.</summary>
+    public async Task<AnalyzeQuestionDnaResult> AnalyzeQuestionDnaAsync(AnalyzeQuestionDnaRequest request, CancellationToken ct = default)
+    {
+        var (options, client) = Current();
+        var model = request.ModelOverride ?? options.Model;
+        var parameters = new MessageCreateParams
+        {
+            Model = model,
+            MaxTokens = options.MaxTokens,
+            System = BuildDnaAnalysisSystemPrompt(),
+            Tools = [BuildDnaAnalysisTool()],
+            ToolChoice = new ToolChoiceTool { Name = DnaAnalysisToolName },
+            Messages = [new() { Role = Role.User, Content = BuildDnaAnalysisUserContent(request) }],
+            CacheControl = new CacheControlEphemeral(),
+        };
+
+        var stopwatch = Stopwatch.StartNew();
+        var response = await client.Messages.Create(parameters, ct);
+        stopwatch.Stop();
+
+        var toolUse = response.Content
+            .Select(b => b.Value)
+            .OfType<ToolUseBlock>()
+            .FirstOrDefault(b => b.Name == DnaAnalysisToolName)
+            ?? throw new InvalidOperationException("Anthropic yanıtında beklenen submit_dna_analysis tool_use bloğu bulunamadı.");
+
+        var usage = BuildUsage(response, stopwatch, options, model);
+        var input = toolUse.Input;
+
+        static List<string> GetStringArray(IReadOnlyDictionary<string, JsonElement> input, string key) =>
+            input.TryGetValue(key, out var v) && v.ValueKind == JsonValueKind.Array
+                ? v.EnumerateArray().Select(e => e.GetString() ?? "").Where(s => s.Length > 0).ToList()
+                : [];
+
+        return new AnalyzeQuestionDnaResult(
+            QuestionArchetype: input.TryGetValue("question_archetype", out var qa) && qa.ValueKind == JsonValueKind.String ? qa.GetString() : null,
+            ReasoningPattern: GetStringArray(input, "reasoning_pattern"),
+            MisconceptionTargets: GetStringArray(input, "misconception_targets"),
+            DistractorLogic: GetStringArray(input, "distractor_logic"),
+            AbstractionLevel: input.TryGetValue("abstraction_level", out var al) && al.ValueKind == JsonValueKind.String ? al.GetString() : null,
+            Usage: usage);
+    }
+
+    private static Tool BuildDnaAnalysisTool() => new()
+    {
+        Name = DnaAnalysisToolName,
+        Description = "Sorunun arkasındaki soyut yapıyı (metnini değil) bildir.",
+        InputSchema = new()
+        {
+            Properties = new Dictionary<string, JsonElement>
+            {
+                ["question_archetype"] = Schema("string",
+                    "Bu sorunun ait olduğu soyut soru kalıbı, kısa bir etiket (ör. \"Grafik → İlişki → " +
+                    "Cebirsel Model → Tahmin\", \"Gerçek Yaşam → Değişken Belirleme → Modelleme → Karar\"). " +
+                    "Önceden tanımlı bir listeden SEÇME — sorunun kendi mantığından TÜRET."),
+                ["reasoning_pattern"] = JsonSerializer.SerializeToElement(new
+                {
+                    type = "array",
+                    description = "Öğrencinin izlemesi gereken muhakeme ZİNCİRİ, SIRALI adımlar halinde " +
+                        "(ör. [\"OBSERVE\",\"RELATE\",\"REPRESENT\",\"MODEL\",\"INFER\"] veya " +
+                        "[\"READ_DATA\",\"DETECT_PATTERN\",\"HYPOTHESIZE\",\"VERIFY\",\"GENERALIZE\"]). " +
+                        "Sabit bir listeden seçme — bu sorunun GERÇEK adımlarını yaz, İngilizce/kısa " +
+                        "SNAKE_CASE etiketler kullan.",
+                    items = new { type = "string" }
+                }),
+                ["misconception_targets"] = JsonSerializer.SerializeToElement(new
+                {
+                    type = "array",
+                    description = "Bu sorunun test ettiği/tetikleyebileceği tipik öğrenci kavram " +
+                        "yanılgıları (ör. \"işlem önceliğini unutma\", \"negatif sayılarla çarpımda işaret hatası\").",
+                    items = new { type = "string" }
+                }),
+                ["distractor_logic"] = JsonSerializer.SerializeToElement(new
+                {
+                    type = "array",
+                    description = "Yanlış şıkların HANGİ mantıkla yanlış cevaba götürdüğü (ör. \"paydaları " +
+                        "toplayan öğrencinin bulacağı yanlış sonuç\"). Şık yoksa boş dizi döndür.",
+                    items = new { type = "string" }
+                }),
+                ["abstraction_level"] = Schema("string",
+                    "Sorunun somuttan soyuta nerede durduğu (ör. \"Somut/Sayısal\", \"Yarı-Soyut/Temsili\", " +
+                    "\"Soyut/Sembolik\").")
+            },
+            Required = []
+        }
+    };
+
+    private static string BuildDnaAnalysisSystemPrompt() => """
+        Sen matematik sorularının YAPISINI analiz eden bir uzmansın. Görevin sorunun METNİNİ
+        özetlemek DEĞİL, sorunun öğrenciyi NASIL DÜŞÜNDÜRDÜĞÜNÜ ortaya çıkarmaktır.
+
+        "Bu soru nasıl yazılmış?" sorusuna değil, "bu soru öğrenciyi nasıl düşündürüyor?"
+        sorusuna cevap ver: hangi bilgiyi doğrudan verir, hangisini vermez, hangi ilişkiyi
+        keşfettirir, hangi temsil dönüşümünü yaptırır, kaç muhakeme adımı gerektirir, hangi
+        kavram yanılgısını test eder.
+
+        KURALLAR:
+        1. Sabit/önceden tanımlı bir kategori listesinden SEÇME — her alanı bu SORUNUN kendi
+           mantığından türet. Aynı iki soru nadiren birebir aynı archetype/reasoning_pattern'a
+           sahip olmalı; kopyala-yapıştır genel etiketlerden kaçın.
+        2. reasoning_pattern SIRALIDIR — adımları öğrencinin gerçekte izleyeceği sırayla yaz.
+        3. Emin olmadığın bir alanı boş bırak (uydurma) — hiçbiri zorunlu değil.
+        4. Cevabını YALNIZCA submit_dna_analysis aracını çağırarak ver.
+        """;
+
+    private static string BuildDnaAnalysisUserContent(AnalyzeQuestionDnaRequest request)
+    {
+        var optionsBlock = request.Options.Count == 0
+            ? "(şık yok — açık uçlu soru)"
+            : string.Join("\n", request.Options.Select((o, i) => $"{(char)('A' + i)}) {o}"));
+
+        return $"""
+            SORU:
+            {request.Question}
+
+            ŞIKLAR:
+            {optionsBlock}
+
+            DOĞRU CEVAP: {request.CorrectAnswer ?? "(belirtilmemiş)"}
+            """;
     }
 
     public async Task<TransformQuestionResult> TransformQuestionAsync(TransformQuestionRequest request, CancellationToken ct = default)

@@ -97,6 +97,66 @@ public class AnalysisOrchestrationService(
 
         var rubric = RubricEngine.Evaluate(result.CriterionEvaluations);
 
+        // §43/§44/§60 LLM-B: Question DNA Analysis (Question Intelligence Engine Faz 2) — LLM-A'nın
+        // curriculum/rubrik rolünden AYRI bir ikinci çağrı, sorunun arkasındaki soyut yapıyı çıkarır.
+        // BİLİNÇLİ OLARAK bir kalite/onay KAPISI DEĞİLDİR (Judge/CurriculumValidator'ın aksine) —
+        // yalnızca ileride Pattern Library'nin (Faz 3) kullanacağı zenginleştirme verisidir, bu
+        // yüzden başarısız olursa Analysis'in geri kalanını ASLA engellemez (try/catch ile yutulur).
+        // Alanlar henüz gerçek migration'a geçirilmedi — ExtensionsJson'da "dna_v2" ön ekiyle
+        // saklanır (bkz. ExtensionsJson'ın revisionSuggestion için kullanıldığı mevcut konvansiyon).
+        string? dnaExtensionsJson = null;
+        try
+        {
+            var dnaRequest = new AnalyzeQuestionDnaRequest(
+                originalDna.OriginalQuestion ?? string.Empty, options.Select(o => o.Text).ToList(), originalDna.OriginalAnswer);
+            var dnaResult = await llmProvider.AnalyzeQuestionDnaAsync(dnaRequest, ct);
+
+            db.AiRuns.Add(new AiRun
+            {
+                QuestionId = questionId,
+                Stage = PipelineStage.DnaAnalysis,
+                ModelTier = llmProvider.Name == "local-heuristic" ? ModelTier.Cheap : ModelTier.Mid,
+                Provider = dnaResult.Usage.Provider,
+                Model = dnaResult.Usage.Model,
+                InputTokens = dnaResult.Usage.InputTokens,
+                OutputTokens = dnaResult.Usage.OutputTokens,
+                CostUsd = dnaResult.Usage.CostUsd,
+                LatencyMs = dnaResult.Usage.LatencyMs
+            });
+
+            var extensions = new Dictionary<string, string>();
+            if (dnaResult.QuestionArchetype is { Length: > 0 })
+            {
+                extensions["dna_v2_question_archetype"] = dnaResult.QuestionArchetype;
+            }
+            if (dnaResult.ReasoningPattern.Count > 0)
+            {
+                extensions["dna_v2_reasoning_pattern"] = JsonSerializer.Serialize(dnaResult.ReasoningPattern);
+            }
+            if (dnaResult.MisconceptionTargets.Count > 0)
+            {
+                extensions["dna_v2_misconception_targets"] = JsonSerializer.Serialize(dnaResult.MisconceptionTargets);
+            }
+            if (dnaResult.DistractorLogic.Count > 0)
+            {
+                extensions["dna_v2_distractor_logic"] = JsonSerializer.Serialize(dnaResult.DistractorLogic);
+            }
+            if (dnaResult.AbstractionLevel is { Length: > 0 })
+            {
+                extensions["dna_v2_abstraction_level"] = dnaResult.AbstractionLevel;
+            }
+
+            if (extensions.Count > 0)
+            {
+                dnaExtensionsJson = JsonSerializer.Serialize(extensions);
+            }
+        }
+        catch (Exception)
+        {
+            // Sessizce atlanır — bkz. yukarıdaki "kalite kapısı değildir" notu. DNA analizi
+            // olmadan da soru normal şekilde Analyzed/ManualReviewRequired durumuna geçer.
+        }
+
         // §8 hallucination control — Faz 1 curriculum veri modeliyle paylaşılan ikinci katman:
         // LLM'in döndürdüğü learning_outcome_code, RAG grounding'i "ikna edici" bulsa bile
         // GERÇEK curriculum tablosunda (admin onaylı) yoksa uydurma kabul edilir — sessizce
@@ -185,6 +245,9 @@ public class AnalysisOrchestrationService(
                     .Concat(curriculumCodeVerified ? [] : [$"unverified_learning_outcome_code:{result.LearningOutcomeCode}"])),
             EditorRequired = editorRequired,
             DnaSchemaVersion = "1.0",
+            // Faz 2 (Question Intelligence Engine) — LLM-B'nin çıkardığı dna_v2_* alanları (bkz.
+            // yukarıdaki try/catch). Henüz gerçek kolon değil, bilinçli olarak ExtensionsJson'da.
+            ExtensionsJson = dnaExtensionsJson,
 
             // Vision mimarisi — requires_visual=false ise tüm alanlar null/default kalır (§9).
             RequiresVisual = visionResult.Decision.RequiresVisual,

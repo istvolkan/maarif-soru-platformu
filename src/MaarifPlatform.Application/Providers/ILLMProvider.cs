@@ -12,6 +12,10 @@ public interface ILLMProvider
 
     Task<AnalyzeQuestionResult> AnalyzeQuestionAsync(AnalyzeQuestionRequest request, CancellationToken ct = default);
 
+    /// <summary>§60 LLM-B: Question DNA Analysis — AnalyzeQuestionAsync'ten (LLM-A, curriculum
+    /// eşleme/rubrik) BİLİNÇLİ OLARAK AYRI bir rol (bkz. AnalyzeQuestionDnaRequest doc).</summary>
+    Task<AnalyzeQuestionDnaResult> AnalyzeQuestionDnaAsync(AnalyzeQuestionDnaRequest request, CancellationToken ct = default);
+
     Task<TransformQuestionResult> TransformQuestionAsync(TransformQuestionRequest request, CancellationToken ct = default);
 
     Task<EvaluateQuestionResult> EvaluateQuestionAsync(EvaluateQuestionRequest request, CancellationToken ct = default);
