@@ -2,6 +2,7 @@
 @rendermode InteractiveServer
 @inject MaarifPlatform.Web.Security.OperationGuard Guard
 @attribute [Authorize(Policy = "QuestionGenerationAccess")]
+@using MaarifPlatform.Application.Generation
 @using MaarifPlatform.Application.Providers
 @using MaarifPlatform.Domain.Enums
 @using MaarifPlatform.Infrastructure.Ai
@@ -68,21 +69,7 @@
         @if (_subject is not null && _curriculumAvailable)
         {
             <div class="field">
-                <label>Tema</label>
-                <select @bind="_themeId" @bind:after="OnThemeChangedAsync">
-                    <option value="">— seçin —</option>
-                    @foreach (var t in _themes)
-                    {
-                        <option value="@t.Id">@t.Name</option>
-                    }
-                </select>
-            </div>
-        }
-
-        @if (_themeId is not null)
-        {
-            <div class="field">
-                <label>Öğrenme Çıktısı / Kazanım</label>
+                <label>Öğrenme Çıktısı / Kazanım Kodu</label>
                 <select @bind="_learningOutcomeId" @bind:after="OnLearningOutcomeChangedAsync">
                     <option value="">— seçin —</option>
                     @foreach (var lo in _learningOutcomes)
@@ -94,6 +81,16 @@
                 {
                     <p class="note">@_selectedLearningOutcome.Description</p>
                 }
+            </div>
+        }
+
+        @if (_selectedLearningOutcome is not null)
+        {
+            <div class="field">
+                <label>Tema</label>
+                <p class="note">
+                    @(_selectedLearningOutcome.ThemeName ?? "Bu kazanım bir temaya bağlı değil")
+                </p>
             </div>
         }
 
@@ -187,15 +184,10 @@
                     {
                         <option value="@v.Value">@v.Label</option>
                     }
-                    <option value="" disabled>Diyagram / Şema — Faz 2b'de eklenecek</option>
-                    <option value="" disabled>İnfografik / Veri Görselleştirme — Faz 2b'de eklenecek</option>
-                    <option value="" disabled>Görsel Senaryo — Faz 2b'de eklenecek</option>
-                    <option value="" disabled>Karma Görsel — Faz 2b'de eklenecek</option>
                 </select>
                 <p class="note">
-                    Fonksiyon grafiği/koordinat sistemi/geometrik şekil/tablo gerçek, deterministik
-                    olarak render edilir (LLM yalnızca ne istendiğinin tarifini üretir). Diğer görsel
-                    türleri Faz 2b'de eklenecek.
+                    Her görsel türü gerçek, deterministik olarak render edilir (LLM yalnızca ne
+                    istendiğinin tarifini üretir, gerçek görseli (SVG) hiç üretmez).
                 </p>
             </div>
 
@@ -255,14 +247,12 @@
 @code {
     private List<int> _grades = new();
     private List<string> _subjects = new();
-    private List<ThemeOption> _themes = new();
     private List<LearningOutcomeOption> _learningOutcomes = new();
     private List<ContentFrameworkOption> _contentFrameworks = new();
     private List<FieldSkillOption> _fieldSkills = new();
 
     private int? _grade;
     private string? _subject;
-    private Guid? _themeId;
     private Guid? _learningOutcomeId;
     private LearningOutcomeOption? _selectedLearningOutcome;
     private bool _curriculumAvailable = true;
@@ -292,7 +282,7 @@
 
     private static readonly string[] QuestionTypeOptions =
     [
-        "Çoktan Seçmeli", "Açık Uçlu", "Kısa Cevaplı", "Yapılandırılmış Açık Uçlu",
+        MultipleChoiceOptionPolicy.MultipleChoiceType, "Açık Uçlu", "Kısa Cevaplı", "Yapılandırılmış Açık Uçlu",
         "Doğru/Yanlış + Gerekçe", "Eşleştirme", "Tablo Yorumlama", "Grafik Yorumlama",
         "Görsel Yorumlama", "Senaryo Temelli", "Problem Temelli"
     ];
@@ -320,7 +310,11 @@
         (GenerationVisualUsage.FunctionGraph, "Grafik (Fonksiyon)"),
         (GenerationVisualUsage.CoordinateSystem, "Koordinat Sistemi"),
         (GenerationVisualUsage.GeometricShape, "Geometrik Şekil"),
-        (GenerationVisualUsage.Table, "Tablo")
+        (GenerationVisualUsage.Table, "Tablo"),
+        (GenerationVisualUsage.Diagram, "Diyagram / Şema"),
+        (GenerationVisualUsage.Infographic, "İnfografik / Veri Görselleştirme"),
+        (GenerationVisualUsage.VisualScenario, "Görsel Senaryo"),
+        (GenerationVisualUsage.MixedVisual, "Karma Görsel")
     ];
 
     private bool CanGenerate =>
@@ -344,8 +338,8 @@
 
     private Task OnGradeChangedAsync()
     {
-        _subject = null; _themeId = null; _learningOutcomeId = null; _selectedLearningOutcome = null;
-        _subjects = new(); _themes = new(); _learningOutcomes = new(); _contentFrameworks = new();
+        _subject = null; _learningOutcomeId = null; _selectedLearningOutcome = null;
+        _subjects = new(); _learningOutcomes = new(); _contentFrameworks = new();
 
         _subjects = _grade is null ? new() : NationalCurriculumCatalog.GetCoursesForGrade(_grade.Value).ToList();
         return Task.CompletedTask;
@@ -354,8 +348,8 @@
     private async Task OnSubjectChangedAsync()
     {
         await Guard.RequireAsync("QuestionGenerationAccess");
-        _themeId = null; _learningOutcomeId = null; _selectedLearningOutcome = null;
-        _themes = new(); _learningOutcomes = new(); _contentFrameworks = new(); _fieldSkills = new();
+        _learningOutcomeId = null; _selectedLearningOutcome = null;
+        _learningOutcomes = new(); _contentFrameworks = new(); _fieldSkills = new();
 
         if (_subject is null || _grade is null)
         {
@@ -370,24 +364,8 @@
             return;
         }
 
-        _themes = (await curriculum.GetThemesAsync(_grade.Value, _subject)).ToList();
+        _learningOutcomes = (await curriculum.GetLearningOutcomesAsync(_grade.Value, _subject)).ToList();
         _fieldSkills = (await curriculum.GetFieldSkillsAsync(_subject)).ToList();
-    }
-
-    private async Task OnThemeChangedAsync()
-    {
-        await Guard.RequireAsync("QuestionGenerationAccess");
-        _learningOutcomeId = null; _selectedLearningOutcome = null;
-        _learningOutcomes = new(); _contentFrameworks = new();
-
-        if (_themeId is null)
-        {
-            return;
-        }
-
-        await using var scope = ScopeFactory.CreateAsyncScope();
-        var curriculum = scope.ServiceProvider.GetRequiredService<CurriculumQueryService>();
-        _learningOutcomes = (await curriculum.GetLearningOutcomesAsync(_themeId.Value)).ToList();
     }
 
     private async Task OnLearningOutcomeChangedAsync()
@@ -444,7 +422,7 @@
         var request = new GenerateBatchRequest(
             Grade: _grade!.Value,
             Subject: _subject!,
-            Theme: _themes.First(t => t.Id == _themeId).Name,
+            Theme: _selectedLearningOutcome!.ThemeName ?? "",
             LearningOutcomeCode: _selectedLearningOutcome!.Code,
             LearningOutcomeDescription: _selectedLearningOutcome.Description,
             ProcessComponents: processComponents,

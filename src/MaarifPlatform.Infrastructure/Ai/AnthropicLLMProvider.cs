@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using Anthropic;
 using Anthropic.Models.Messages;
+using MaarifPlatform.Application.Generation;
 using MaarifPlatform.Application.Providers;
 using MaarifPlatform.Application.Rubric;
 using MaarifPlatform.Application.Visuals;
@@ -25,6 +26,7 @@ public class AnthropicLLMProvider : ILLMProvider
     private const string RecommendRevisionToolName = "submit_revision_recommendation";
     private const string ExtractCurriculumToolName = "submit_curriculum_structure";
     private const string ValidateCurriculumAlignmentToolName = "submit_curriculum_alignment";
+    private const string VaryQuestionToolName = "submit_question_variations";
 
     private readonly IOptionsMonitor<AnthropicOptions> _optionsMonitor;
     private AnthropicClient? _client;
@@ -155,7 +157,7 @@ public class AnthropicLLMProvider : ILLMProvider
             Model = model,
             MaxTokens = options.MaxTokens,
             System = BuildGenerateSystemPrompt(request),
-            Tools = [BuildGenerationTool()],
+            Tools = [BuildGenerationTool(MultipleChoiceOptionPolicy.RequiredOptionCountFor(request.Grade, request.QuestionType))],
             ToolChoice = new ToolChoiceTool { Name = GenerateToolName },
             Messages = [new() { Role = Role.User, Content = BuildGenerateUserContent(request) }],
             CacheControl = new CacheControlEphemeral(),
@@ -414,6 +416,37 @@ public class AnthropicLLMProvider : ILLMProvider
             SkillAlignmentScore: input.TryGetValue("skill_alignment_score", out var sas) ? sas.GetInt32() : 0,
             Issues: GetStringArray(input, "issues"),
             Usage: usage);
+    }
+
+    /// <summary>Soru Çeşitlendir — Maarif Modeli müfredat doğrulaması YAPMAZ (bkz. ILLMProvider'daki
+    /// doc), yalnızca kullanıcının sağladığı örnek soruyu küçük/mantıklı değişikliklerle çoğaltır.</summary>
+    public async Task<VaryQuestionResult> VaryQuestionAsync(VaryQuestionRequest request, CancellationToken ct = default)
+    {
+        var (options, client) = Current();
+        var model = request.ModelOverride ?? options.Model;
+        var parameters = new MessageCreateParams
+        {
+            Model = model,
+            MaxTokens = options.MaxTokens,
+            System = BuildVaryQuestionSystemPrompt(request),
+            Tools = [BuildVaryQuestionTool()],
+            ToolChoice = new ToolChoiceTool { Name = VaryQuestionToolName },
+            Messages = [new() { Role = Role.User, Content = "Yukarıdaki kaynak sorudan istenen sayıda varyasyon üret." }],
+            CacheControl = new CacheControlEphemeral(),
+        };
+
+        var stopwatch = Stopwatch.StartNew();
+        var response = await client.Messages.Create(parameters, ct);
+        stopwatch.Stop();
+
+        var toolUse = response.Content
+            .Select(b => b.Value)
+            .OfType<ToolUseBlock>()
+            .FirstOrDefault(b => b.Name == VaryQuestionToolName)
+            ?? throw new InvalidOperationException("Anthropic yanıtında beklenen submit_question_variations tool_use bloğu bulunamadı.");
+
+        var usage = BuildUsage(response, stopwatch, options, model);
+        return ParseVaryQuestionResult(toolUse.Input, usage);
     }
 
     private static Tool BuildValidateCurriculumAlignmentTool() => new()
@@ -815,19 +848,28 @@ public class AnthropicLLMProvider : ILLMProvider
         }
     });
 
-    private static Tool BuildGenerationTool()
+    private static Tool BuildGenerationTool(int? requiredOptionCount = null)
     {
         var properties = new Dictionary<string, JsonElement>
         {
             ["question"] = Schema("string", "Üretilen soru metni."),
-            ["options"] = JsonSerializer.SerializeToElement(new
-            {
-                type = "array",
-                description = "3-6 şık.",
-                items = new { type = "string" },
-                minItems = 3,
-                maxItems = 6
-            }),
+            ["options"] = JsonSerializer.SerializeToElement(requiredOptionCount is int n
+                ? new
+                {
+                    type = "array",
+                    description = $"Tam olarak {n} şık (bundan az ya da çok ASLA).",
+                    items = new { type = "string" },
+                    minItems = n,
+                    maxItems = n
+                }
+                : new
+                {
+                    type = "array",
+                    description = "3-6 şık.",
+                    items = new { type = "string" },
+                    minItems = 3,
+                    maxItems = 6
+                }),
             ["correct_answer"] = Schema("string", "Doğru şıkkın metni (options içindeki değerlerden biri)."),
             ["solution"] = Schema("string", "Adım adım çözüm."),
             ["distractors"] = BuildDistractorsSchema(),
@@ -928,13 +970,52 @@ public class AnthropicLLMProvider : ILLMProvider
             required = new[] { "vertex", "label" }
         };
 
+        var diagramNodeSchema = new
+        {
+            type = "object",
+            properties = new
+            {
+                id = new { type = "string", description = "diagram_edges'in from/to ile referans vereceği benzersiz kimlik." },
+                label = new { type = "string" },
+                x = new { type = "number", description = "Vermezsen otomatik ızgaraya yerleştirilir — çoğu durumda vermene gerek yok." },
+                y = new { type = "number" }
+            },
+            required = new[] { "id", "label" }
+        };
+
+        var diagramEdgeSchema = new
+        {
+            type = "object",
+            properties = new
+            {
+                from = new { type = "string", description = "diagram_nodes içindeki bir düğümün id'si." },
+                to = new { type = "string" },
+                label = new { type = "string" },
+                directed = new { type = "boolean", description = "Varsayılan true (ok ucu)." }
+            },
+            required = new[] { "from", "to" }
+        };
+
+        var iconGroupSchema = new
+        {
+            type = "object",
+            properties = new
+            {
+                icon = new { type = "string", @enum = new[] { "circle", "square", "triangle", "star" } },
+                count = new { type = "integer", description = "1-20 arası mantıklı; daha büyük sayılarda ikon tekrar etmez, '× N' etiketiyle gösterilir." },
+                label = new { type = "string", description = "Örn. \"Kırmızı toplar\"." },
+                color = new { type = "string", description = "Örn. \"#1a56db\" — vermezsen varsayılan renk kullanılır." }
+            },
+            required = new[] { "icon", "count" }
+        };
+
         return JsonSerializer.SerializeToElement(new
         {
             type = "object",
             description = "visual_required=true ise DOLDUR. type alanı, istenen görsel türüyle EŞLEŞMELİ.",
             properties = new Dictionary<string, object>
             {
-                ["type"] = new { type = "string", @enum = new[] { "function_graph", "coordinate_system", "geometric_shape", "table" } },
+                ["type"] = new { type = "string", @enum = new[] { "function_graph", "coordinate_system", "geometric_shape", "table", "diagram", "infographic", "visual_scenario", "mixed_visual" } },
                 ["x_min"] = new { type = "number" },
                 ["x_max"] = new { type = "number" },
                 ["y_min"] = new { type = "number" },
@@ -956,8 +1037,12 @@ public class AnthropicLLMProvider : ILLMProvider
                 },
                 ["side_labels"] = new { type = "array", description = "Yalnızca type=geometric_shape.", items = sideLabelSchema },
                 ["angle_labels"] = new { type = "array", description = "Yalnızca type=geometric_shape.", items = angleLabelSchema },
-                ["headers"] = new { type = "array", description = "Yalnızca type=table.", items = new { type = "string" } },
-                ["rows"] = new { type = "array", description = "Yalnızca type=table — her satır headers ile aynı uzunlukta.", items = new { type = "array", items = new { type = "string" } } }
+                ["headers"] = new { type = "array", description = "type=table: sütun başlıkları. type=infographic: kategori adları.", items = new { type = "string" } },
+                ["rows"] = new { type = "array", description = "type=table: her satır headers ile aynı uzunlukta. type=infographic: TEK satır, headers ile aynı uzunlukta SAYISAL değerler.", items = new { type = "array", items = new { type = "string" } } },
+                ["diagram_nodes"] = new { type = "array", description = "Yalnızca type=diagram.", items = diagramNodeSchema },
+                ["diagram_edges"] = new { type = "array", description = "Yalnızca type=diagram, isteğe bağlı.", items = diagramEdgeSchema },
+                ["chart_kind"] = new { type = "string", description = "Yalnızca type=infographic.", @enum = new[] { "bar", "pie" } },
+                ["icon_groups"] = new { type = "array", description = "Yalnızca type=visual_scenario.", items = iconGroupSchema }
             },
             required = new[] { "type" }
         });
@@ -991,12 +1076,30 @@ public class AnthropicLLMProvider : ILLMProvider
                 "\n        - Görsel ZORUNLU: visual_required=true, visual_spec.type=\"geometric_shape\" olmalı.",
             GenerationVisualUsage.Table =>
                 "\n        - Görsel ZORUNLU: visual_required=true, visual_spec.type=\"table\" olmalı.",
+            GenerationVisualUsage.Diagram =>
+                "\n        - Görsel ZORUNLU: visual_required=true, visual_spec.type=\"diagram\" olmalı " +
+                "(diagram_nodes + isteğe bağlı diagram_edges — akış şeması/kavram haritası/hiyerarşi).",
+            GenerationVisualUsage.Infographic =>
+                "\n        - Görsel ZORUNLU: visual_required=true, visual_spec.type=\"infographic\" olmalı " +
+                "(headers=kategoriler, rows[0]=sayısal değerler, chart_kind=\"bar\" veya \"pie\").",
+            GenerationVisualUsage.VisualScenario =>
+                "\n        - Görsel ZORUNLU: visual_required=true, visual_spec.type=\"visual_scenario\" olmalı " +
+                "(icon_groups — sayma/kombinatorik/olasılık senaryosundaki nesneleri basit ikonlarla temsil et).",
+            GenerationVisualUsage.MixedVisual =>
+                "\n        - Görsel ZORUNLU: visual_required=true, visual_spec.type=\"mixed_visual\" olmalı " +
+                "— HEM bir birincil görsel (functions VEYA shape+vertices VEYA points/segments/vectors) HEM " +
+                "de bir tablo (headers+rows) BİRLİKTE doldurulmalı, yalnızca biri yeterli değildir.",
             _ => "\n        - Görsel KULLANMA: visual_required=false."
         };
 
         // §9 maliyet ilkesi: önceki deneme reddedildiyse gerekçeyi kör bir tekrar yerine somut
         // düzeltme talimatı olarak ver — aksi halde aynı hata büyük olasılıkla tekrarlanır ve
         // Generation+CurriculumValidation çağrıları boşa (0 sonuçla) harcanmış olur.
+        var requiredOptionCount = MultipleChoiceOptionPolicy.RequiredOptionCountFor(request.Grade, request.QuestionType);
+        var optionCountLine = requiredOptionCount is int n
+            ? $"\n        - Şık adedi: TAM OLARAK {n} şık (Sınıf {request.Grade} için sabit kural, bundan az/çok ASLA)."
+            : "";
+
         var previousAttemptBlock = string.IsNullOrWhiteSpace(request.PreviousAttemptFeedback)
             ? ""
             : $"""
@@ -1020,7 +1123,7 @@ public class AnthropicLLMProvider : ILLMProvider
         - Kazanım açıklaması (soru MUTLAKA bunu ölçmeli, sadece temayı değil): {request.LearningOutcomeDescription}
         - Zorluk: {request.Difficulty}
         - Soru tipi: {request.QuestionType}
-        - Muhakeme tipi: {request.ReasoningType}{skillsLine}{frameworksLine}{visualInstruction}{componentsLine}
+        - Muhakeme tipi: {request.ReasoningType}{optionCountLine}{skillsLine}{frameworksLine}{visualInstruction}{componentsLine}
 
         KURALLAR:
         1. Yalnızca aşağıdaki [KAYNAK n] bloklarına dayanarak kazanım/olgu iddiası üret.
@@ -1080,6 +1183,96 @@ public class AnthropicLLMProvider : ILLMProvider
             Usage: usage,
             VisualRequired: visualRequired,
             VisualSpec: visualSpec);
+    }
+
+    /// <summary>Soru Çeşitlendir sistem promptu — GenerateQuestionAsync'in aksine Grade/Subject/
+    /// LearningOutcome/Grounding YOK ve prompt açıkça müfredat kazanım/beceri İDDİASI ÜRETME diye
+    /// uyarır (bkz. ILLMProvider.VaryQuestionAsync'in doc'u — bu akış curriculum doğrulamasından
+    /// muaftır, ayrı bir havuzda saklanır).</summary>
+    internal static string BuildVaryQuestionSystemPrompt(VaryQuestionRequest request) => $"""
+        Sen verilen bir örnek sorudan, KÜÇÜK ve MANTIKLI değişikliklerle (sayıları değiştirme,
+        isim/bağlam/senaryo değiştirme vb.) yapısal olarak AYNI kalan varyasyonlar üreten bir
+        asistansın.
+
+        KURALLAR:
+        1. Tam olarak {request.Count} adet varyasyon üret.
+        2. Her varyasyon, kaynak sorunun soru tipini (çoktan seçmeli/açık uçlu/vb.), zorluk
+           seviyesini ve çözüm yöntemini KORUMALI — yalnızca sayısal değerler, isimler,
+           bağlam/senaryo gibi yüzeysel unsurlar değişsin.
+        3. Kaynak soru çoktan seçmeliyse (şıkları varsa), her varyasyon AYNI SAYIDA şıkka sahip
+           olmalı ve doğru cevap + çeldiriciler yeni sayılarla mantıksal olarak tutarlı olmalı.
+           Kaynak soru açık uçluysa options alanını boş dizi bırak.
+        4. ÖNEMLİ: Bu modda Türkiye Yüzyılı Maarif Modeli müfredat kazanım/beceri doğrulaması
+           ARANMAZ — gerçek bir müfredat kodu veya kazanım iddiası ÜRETME, yalnızca kaynak
+           sorunun kendi yapısına ve mantığına sadık kal.
+        5. Her varyasyon için adım adım çözüm yaz.
+        6. Varyasyonlar birbirinden farklı olmalı (aynı sayıları/isimleri tekrarlama).
+        7. Cevabını YALNIZCA submit_question_variations aracını çağırarak ver.
+
+        KAYNAK SORU:
+        {request.SourceQuestionText}
+        """;
+
+    internal static Tool BuildVaryQuestionTool()
+    {
+        var variationSchema = new
+        {
+            type = "object",
+            properties = new
+            {
+                question = new { type = "string", description = "Varyasyon soru metni." },
+                options = new
+                {
+                    type = "array",
+                    description = "Kaynak soru çoktan seçmeliyse aynı şık sayısıyla; açık uçluysa boş dizi.",
+                    items = new { type = "string" }
+                },
+                correct_answer = new { type = "string", description = "Doğru cevap — options doluysa onlardan biri, açık uçluysa doğrudan cevap metni." },
+                solution = new { type = "string", description = "Adım adım çözüm." }
+            },
+            required = new[] { "question", "options", "correct_answer", "solution" }
+        };
+
+        return new Tool
+        {
+            Name = VaryQuestionToolName,
+            Description = "Üretilen soru varyasyonlarının listesini bildir.",
+            InputSchema = new()
+            {
+                Properties = new Dictionary<string, JsonElement>
+                {
+                    ["variations"] = JsonSerializer.SerializeToElement(new
+                    {
+                        type = "array",
+                        description = "Her biri kaynak sorunun küçük değişikliklerle çoğaltılmış bir hali.",
+                        items = variationSchema
+                    })
+                },
+                Required = ["variations"]
+            }
+        };
+    }
+
+    internal static VaryQuestionResult ParseVaryQuestionResult(IReadOnlyDictionary<string, JsonElement> input, AiUsage usage)
+    {
+        var variations = new List<QuestionVariantDto>();
+        if (input.TryGetValue("variations", out var variationsEl) && variationsEl.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in variationsEl.EnumerateArray())
+            {
+                var options = item.TryGetProperty("options", out var optionsEl) && optionsEl.ValueKind == JsonValueKind.Array
+                    ? optionsEl.EnumerateArray().Select(o => o.GetString() ?? "").ToList()
+                    : new List<string>();
+
+                variations.Add(new QuestionVariantDto(
+                    Question: item.TryGetProperty("question", out var q) ? q.GetString() ?? "" : "",
+                    Options: options,
+                    CorrectAnswer: item.TryGetProperty("correct_answer", out var ca) ? ca.GetString() ?? "" : "",
+                    Solution: item.TryGetProperty("solution", out var sol) ? sol.GetString() ?? "" : ""));
+            }
+        }
+
+        return new VaryQuestionResult(variations, usage);
     }
 
     internal static VisualSpec ParseVisualSpec(JsonElement el)
@@ -1156,13 +1349,42 @@ public class AnthropicLLMProvider : ILLMProvider
                 .ToList()
             : null;
 
+        List<DiagramNode>? diagramNodes = el.TryGetProperty("diagram_nodes", out var dnEl) && dnEl.ValueKind == JsonValueKind.Array
+            ? dnEl.EnumerateArray()
+                .Select(n => new DiagramNode(
+                    GetString(n, "id") ?? throw new FormatException("diagram_node.id eksik."),
+                    GetString(n, "label") ?? throw new FormatException("diagram_node.label eksik."),
+                    GetDouble(n, "x"), GetDouble(n, "y")))
+                .ToList()
+            : null;
+
+        List<DiagramEdge>? diagramEdges = el.TryGetProperty("diagram_edges", out var deEl) && deEl.ValueKind == JsonValueKind.Array
+            ? deEl.EnumerateArray()
+                .Select(e => new DiagramEdge(
+                    GetString(e, "from") ?? throw new FormatException("diagram_edge.from eksik."),
+                    GetString(e, "to") ?? throw new FormatException("diagram_edge.to eksik."),
+                    GetString(e, "label"),
+                    !(e.TryGetProperty("directed", out var d) && d.ValueKind == JsonValueKind.False)))
+                .ToList()
+            : null;
+
+        List<IconGroup>? iconGroups = el.TryGetProperty("icon_groups", out var igEl) && igEl.ValueKind == JsonValueKind.Array
+            ? igEl.EnumerateArray()
+                .Select(g => new IconGroup(
+                    GetString(g, "icon") ?? throw new FormatException("icon_group.icon eksik."),
+                    (int)(GetDouble(g, "count") ?? throw new FormatException("icon_group.count eksik.")),
+                    GetString(g, "label"), GetString(g, "color")))
+                .ToList()
+            : null;
+
         return new VisualSpec(
             type,
             GetDouble(el, "x_min"), GetDouble(el, "x_max"), GetDouble(el, "y_min"), GetDouble(el, "y_max"),
             GetString(el, "x_label"), GetString(el, "y_label"),
             functions, points, vertices, segments, vectors,
             GetString(el, "shape"), circle, sideLabels, angleLabels,
-            GetStringList(el, "headers"), rows);
+            GetStringList(el, "headers"), rows,
+            diagramNodes, diagramEdges, GetString(el, "chart_kind"), iconGroups);
     }
 
     internal static string BuildGroundingBlock(IReadOnlyList<GroundingReference> grounding) =>

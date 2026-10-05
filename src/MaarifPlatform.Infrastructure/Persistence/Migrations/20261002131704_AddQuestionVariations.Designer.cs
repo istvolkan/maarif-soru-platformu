@@ -3,6 +3,7 @@ using System;
 using MaarifPlatform.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using Pgvector;
@@ -12,9 +13,11 @@ using Pgvector;
 namespace MaarifPlatform.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(MaarifDbContext))]
-    partial class MaarifDbContextModelSnapshot : ModelSnapshot
+    [Migration("20261002131704_AddQuestionVariations")]
+    partial class AddQuestionVariations
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -872,17 +875,6 @@ namespace MaarifPlatform.Infrastructure.Persistence.Migrations
                     b.Property<string>("SourceQuestionText")
                         .IsRequired()
                         .HasColumnType("text");
-
-                    b.Property<decimal?>("VisionCostUsd")
-                        .HasColumnType("numeric");
-
-                    b.Property<string>("VisionModel")
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.Property<string>("VisionProvider")
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)");
 
                     b.HasKey("Id");
 

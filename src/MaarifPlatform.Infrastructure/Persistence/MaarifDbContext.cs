@@ -21,6 +21,11 @@ public class MaarifDbContext(DbContextOptions<MaarifDbContext> options) : DbCont
     public DbSet<QuestionVisualAsset> QuestionVisualAssets => Set<QuestionVisualAsset>();
     public DbSet<QuestionEmbedding> QuestionEmbeddings => Set<QuestionEmbedding>();
 
+    // Soru Çeşitlendir — curriculum-validated Soru Havuzu'ndan bilinçli olarak AYRI (bkz.
+    // QuestionVariationBatch'in kendi doc yorumu).
+    public DbSet<QuestionVariationBatch> QuestionVariationBatches => Set<QuestionVariationBatch>();
+    public DbSet<QuestionVariationItem> QuestionVariationItems => Set<QuestionVariationItem>();
+
     public DbSet<LearningOutcome> LearningOutcomes => Set<LearningOutcome>();
     public DbSet<AlignmentScore> AlignmentScores => Set<AlignmentScore>();
     public DbSet<Distractor> Distractors => Set<Distractor>();

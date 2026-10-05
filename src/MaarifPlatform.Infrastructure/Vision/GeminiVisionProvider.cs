@@ -1,6 +1,7 @@
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using MaarifPlatform.Application.Extraction;
 using MaarifPlatform.Application.Providers;
 using MaarifPlatform.Application.Vision;
 using Microsoft.Extensions.Options;
@@ -45,6 +46,115 @@ public class GeminiVisionProvider(HttpClient httpClient, IOptionsMonitor<GeminiO
     /// (bkz. <see cref="VisualObservationValidator"/>); mantık provider başına tekrar yazılmaz.</summary>
     public Task<IReadOnlyList<VisualWarning>> ValidateVisualStructureAsync(VisualObservation observation, CancellationToken ct = default) =>
         Task.FromResult(VisualObservationValidator.Validate(observation));
+
+    public Task<PageTranscriptionResult> TranscribePageAsync(byte[] pageImagePng, int pageNo, CancellationToken ct = default) =>
+        CallGeminiTranscribeAsync(pageImagePng, pageNo, ct);
+
+    private async Task<PageTranscriptionResult> CallGeminiTranscribeAsync(byte[] imagePng, int pageNo, CancellationToken ct)
+    {
+        var options = optionsMonitor.CurrentValue;
+        if (string.IsNullOrWhiteSpace(options.ApiKey))
+        {
+            throw new InvalidOperationException(
+                "Vision:Gemini:ApiKey tanımlı değil. Gerçek görsel transkripsiyon için appsettings/user-secrets " +
+                "üzerinden bir API anahtarı sağlanmalı; anahtar yoksa Vision:Provider=Local kullanın.");
+        }
+
+        const string systemPreamble = TranscribeSystemPrompt;
+        var requestBody = new
+        {
+            contents = new object[]
+            {
+                new
+                {
+                    parts = new object[]
+                    {
+                        new { text = systemPreamble },
+                        new { inline_data = new { mime_type = "image/png", data = Convert.ToBase64String(imagePng) } }
+                    }
+                }
+            },
+            generationConfig = new
+            {
+                responseMimeType = "application/json",
+                responseSchema = BuildTranscriptionResponseSchema()
+            }
+        };
+
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post, $"{options.BaseUrl}/models/{options.Model}:generateContent?key={options.ApiKey}")
+        {
+            Content = JsonContent.Create(requestBody)
+        };
+
+        using var response = await httpClient.SendAsync(request, ct);
+        response.EnsureSuccessStatusCode();
+
+        var payload = await response.Content.ReadFromJsonAsync<GeminiGenerateContentResponse>(cancellationToken: ct)
+            ?? throw new InvalidOperationException("Gemini API boş yanıt döndü.");
+
+        var jsonText = payload.Candidates?.FirstOrDefault()?.Content?.Parts?.FirstOrDefault()?.Text
+            ?? throw new InvalidOperationException("Gemini yanıtında beklenen JSON içerik bulunamadı.");
+
+        var inputTokens = payload.UsageMetadata?.PromptTokenCount ?? 0;
+        var outputTokens = payload.UsageMetadata?.CandidatesTokenCount ?? 0;
+        var usage = new AiUsage(Name, options.Model, inputTokens, outputTokens, 0m, 0);
+
+        return ParseTranscription(jsonText, usage);
+    }
+
+    private static object BuildTranscriptionResponseSchema() => new
+    {
+        type = "OBJECT",
+        properties = new
+        {
+            questions = new
+            {
+                type = "ARRAY",
+                items = new
+                {
+                    type = "OBJECT",
+                    properties = new
+                    {
+                        question_no = new { type = "INTEGER" },
+                        stem = new { type = "STRING" },
+                        options = new
+                        {
+                            type = "ARRAY",
+                            items = new
+                            {
+                                type = "OBJECT",
+                                properties = new { label = new { type = "STRING" }, text = new { type = "STRING" } },
+                                required = new[] { "label", "text" }
+                            }
+                        },
+                        correct_answer = new { type = "STRING" },
+                        has_visual = new { type = "BOOLEAN" },
+                        visual_description = new { type = "STRING" }
+                    },
+                    required = new[] { "stem", "options", "has_visual" }
+                }
+            }
+        },
+        required = new[] { "questions" }
+    };
+
+    private static PageTranscriptionResult ParseTranscription(string json, AiUsage usage)
+    {
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+
+        var blocks = new List<TranscribedQuestionBlock>();
+        if (root.TryGetProperty("questions", out var questionsEl) && questionsEl.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var q in questionsEl.EnumerateArray())
+            {
+                blocks.Add(ParseTranscribedBlock(q));
+            }
+        }
+
+        return new PageTranscriptionResult(blocks, usage);
+    }
 
     private async Task<VisualObservation> CallGeminiAsync(byte[] imagePng, string taskPrompt, CancellationToken ct)
     {
@@ -109,6 +219,57 @@ public class GeminiVisionProvider(HttpClient httpClient, IOptionsMonitor<GeminiO
         var usage = new AiUsage(Name, options.Model, inputTokens, outputTokens, 0m, 0);
 
         return ParseObservation(jsonText, usage);
+    }
+
+    /// <summary>Ham PDF metni + regex heuristic'in (IQuestionSegmenter) YERİNE kullanılır — bu yüzden
+    /// yalnızca "görseldeki öğeleri tespit et" değil, sayfadaki HER soruyu, matematiksel gösterimi
+    /// (kesir/üs/kök) olabildiğince sadık biçimde yazıya dökerek transkribe etmesi istenir. Bir
+    /// cevap anahtarı/içindekiler sayfası soru OLARAK SAYILMAMALI — questions boş dizi dönmeli.</summary>
+    private const string TranscribeSystemPrompt =
+        "Sen bir matematik/fen ders kitabı sayfasının görüntüsünü okuyup üzerindeki soruları " +
+        "yazıya döken bir transkripsiyon uzmanısın.\n\n" +
+        "KURALLAR:\n" +
+        "1. Sayfadaki HER soruyu ayrı bir öğe olarak döndür. Soru numarası görseldeyse question_no'ya yaz.\n" +
+        "2. stem alanına soru kökünü, matematiksel gösterimi (kesir, üs, kök, formül) olabildiğince " +
+        "sadık bir şekilde DÜZ METNE çevirerek yaz (örn. kesir için 'a/b', üs için 'x^2'). Diyagramdaki " +
+        "nokta/etiket isimlerini stem'e KARIŞTIRMA — onlar visual_description alanına ait.\n" +
+        "3. Şıklar varsa options dizisine (label: 'A'/'B'/..., text) yaz; yoksa boş dizi döndür.\n" +
+        "4. Görselde doğrudan yazılı bir doğru cevap/işaretli şık görüyorsan correct_answer'a yaz; " +
+        "emin değilsen boş bırak — TAHMİN ETME.\n" +
+        "5. Sorunun bir şekil/grafik/tablo/diyagrama GERÇEKTEN ihtiyacı varsa has_visual=true yap ve " +
+        "visual_description'a o şeklin/diyagramın ne gösterdiğini (köşe/nokta isimleri, kenar " +
+        "uzunlukları, eksen etiketleri vb. dahil) ayrıntılı yaz. Salt dekoratif görsellerde false.\n" +
+        "6. Bu sayfa bir cevap anahtarı, içindekiler, önsöz gibi SORU OLMAYAN bir sayfaysa questions " +
+        "alanını boş dizi döndür — bir cevap anahtarını soru sanıp UYDURMA.\n" +
+        "7. Okunaksız/belirsiz bir kısım varsa olduğu gibi (belirsiz işaretleyerek) yaz, tahminle doldurma.";
+
+    private static TranscribedQuestionBlock ParseTranscribedBlock(JsonElement q)
+    {
+        static string GetString(JsonElement el, string prop) =>
+            el.TryGetProperty(prop, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() ?? "" : "";
+        static string? GetOptionalString(JsonElement el, string prop) =>
+            el.TryGetProperty(prop, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+        static int? GetOptionalInt(JsonElement el, string prop) =>
+            el.TryGetProperty(prop, out var v) && v.ValueKind == JsonValueKind.Number ? v.GetInt32() : null;
+        static bool GetBool(JsonElement el, string prop) =>
+            el.TryGetProperty(prop, out var v) && v.ValueKind is JsonValueKind.True or JsonValueKind.False && v.GetBoolean();
+
+        var options = new List<OptionCandidate>();
+        if (q.TryGetProperty("options", out var optionsEl) && optionsEl.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var o in optionsEl.EnumerateArray())
+            {
+                options.Add(new OptionCandidate(GetString(o, "label"), GetString(o, "text")));
+            }
+        }
+
+        return new TranscribedQuestionBlock(
+            QuestionNo: GetOptionalInt(q, "question_no"),
+            Stem: GetString(q, "stem"),
+            Options: options,
+            CorrectAnswer: GetOptionalString(q, "correct_answer"),
+            HasVisual: GetBool(q, "has_visual"),
+            VisualDescription: GetOptionalString(q, "visual_description"));
     }
 
     private static object BuildResponseSchema() => new

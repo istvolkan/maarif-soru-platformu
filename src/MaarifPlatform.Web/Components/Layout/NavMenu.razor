@@ -13,6 +13,9 @@
             <AuthorizeView Policy="QuestionGenerationAccess">
                 <NavLink href="questions/generate">Soru Üret</NavLink>
             </AuthorizeView>
+            <AuthorizeView Policy="QuestionGenerationAccess">
+                <NavLink href="questions/vary">Soru Çeşitlendir</NavLink>
+            </AuthorizeView>
             <AuthorizeView Policy="QuestionPoolAccess">
                 <NavLink href="questions/pool">Soru Havuzu</NavLink>
             </AuthorizeView>
@@ -22,15 +25,25 @@
             <AuthorizeView Policy="CurriculumApproval">
                 <NavLink href="admin/curriculum-review">Müfredat Onayı</NavLink>
             </AuthorizeView>
+        </nav>
 
-            <AuthorizeView Roles="Admin">
+        @* Admin bölümü bilinçli olarak <nav>'ın (overflow-x:auto — dar ekranlarda link listesini
+           yatay kaydırır) DIŞINDA: o container'ın overflow'u, içindeki herhangi bir absolute
+           panel'i (Ayarlar açılır menüsü) de kırpar/taşırır — bkz. "ÜST MENU DAĞILIYOR" raporu. *@
+        <AuthorizeView Roles="Admin">
+            <div class="admin-nav">
                 <span class="nav-sep"></span>
                 <NavLink href="admin/books">Kitaplar</NavLink>
-                <NavLink href="admin/users">Kullanıcılar</NavLink>
-                <NavLink href="admin/permissions">Yetkiler</NavLink>
-                <NavLink href="admin/settings">Ayarlar</NavLink>
-            </AuthorizeView>
-        </nav>
+                <details class="nav-dropdown">
+                    <summary>Ayarlar</summary>
+                    <div class="nav-dropdown-panel">
+                        <NavLink href="admin/users">Kullanıcılar</NavLink>
+                        <NavLink href="admin/permissions">Yetkiler</NavLink>
+                        <NavLink href="admin/settings">Genel Ayarlar</NavLink>
+                    </div>
+                </details>
+            </div>
+        </AuthorizeView>
 
         <AuthorizeView>
             <Authorized>
@@ -102,7 +115,15 @@
         scrollbar-width: thin;
     }
 
-        .topbar nav a {
+    .admin-nav {
+        display: flex;
+        gap: 0.1rem;
+        flex-wrap: nowrap;
+        align-items: center;
+        flex-shrink: 0;
+    }
+
+        .topbar nav a, .admin-nav a {
             color: #d8d8d8;
             font-weight: 600;
             font-size: 0.82rem;
@@ -113,14 +134,69 @@
             transition: background-color 0.15s ease, color 0.15s ease;
         }
 
-            .topbar nav a:hover {
+            .topbar nav a:hover, .admin-nav a:hover {
                 background: rgba(255, 255, 255, 0.08);
                 color: #fff;
             }
 
-            .topbar nav a.active {
+            .topbar nav a.active, .admin-nav a.active {
                 background: var(--z-red);
                 color: #fff;
+            }
+
+    .nav-dropdown {
+        position: relative;
+    }
+
+        .nav-dropdown summary {
+            list-style: none;
+            cursor: pointer;
+            color: #d8d8d8;
+            font-weight: 600;
+            font-size: 0.82rem;
+            padding: 0.45rem 0.55rem;
+            border-radius: 6px;
+            white-space: nowrap;
+            transition: background-color 0.15s ease, color 0.15s ease;
+        }
+
+            .nav-dropdown summary::-webkit-details-marker {
+                display: none;
+            }
+
+            .nav-dropdown summary::after {
+                content: " ▾";
+                font-size: 0.7rem;
+            }
+
+            .nav-dropdown summary:hover {
+                background: rgba(255, 255, 255, 0.08);
+                color: #fff;
+            }
+
+        .nav-dropdown[open] summary {
+            background: rgba(255, 255, 255, 0.12);
+            color: #fff;
+        }
+
+        .nav-dropdown-panel {
+            position: absolute;
+            top: calc(100% + 0.3rem);
+            left: 0;
+            display: flex;
+            flex-direction: column;
+            min-width: 160px;
+            background: var(--z-black);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 6px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+            padding: 0.35rem;
+            z-index: 20;
+        }
+
+            .nav-dropdown-panel a {
+                padding: 0.5rem 0.65rem;
+                border-radius: 4px;
             }
 
     .nav-sep {

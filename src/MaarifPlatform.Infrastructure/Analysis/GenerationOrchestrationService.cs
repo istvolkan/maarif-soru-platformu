@@ -261,6 +261,18 @@ public class GenerationOrchestrationService(
 
                 db.AiRuns.Add(BuildAiRun(null, PipelineStage.Generation, generated.Usage, llmProvider.Name));
 
+                // Şık adedi Grade'e göre sabit bir kural (bkz. MultipleChoiceOptionPolicy) — prompt/
+                // şema seviyesinde sağlayıcıya zaten bildirilir, ama bu asıl GARANTİ kapısı: LLM
+                // (veya mock) kurala uymazsa slot diğer kalite kontrolleri gibi regenerate edilir,
+                // yanlış şık adediyle ASLA kalıcılaştırılmaz.
+                var requiredOptionCount = MultipleChoiceOptionPolicy.RequiredOptionCountFor(request.Grade, item.QuestionType);
+                if (requiredOptionCount is int requiredCount && generated.Options.Count != requiredCount)
+                {
+                    attemptMessages.Add(
+                        $"Çoktan seçmeli soru için {requiredCount} şık üretilmeliydi, {generated.Options.Count} şık üretildi.");
+                    continue;
+                }
+
                 yield return new GenerationProgressEvent(slotNo, blueprint.Count,
                     $"Soru {slotNo}/{blueprint.Count}: öğretim programı uyumu kontrol ediliyor…", null, null, null);
 

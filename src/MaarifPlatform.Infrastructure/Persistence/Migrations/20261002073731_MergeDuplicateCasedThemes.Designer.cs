@@ -3,6 +3,7 @@ using System;
 using MaarifPlatform.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using Pgvector;
@@ -12,9 +13,11 @@ using Pgvector;
 namespace MaarifPlatform.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(MaarifDbContext))]
-    partial class MaarifDbContextModelSnapshot : ModelSnapshot
+    [Migration("20261002073731_MergeDuplicateCasedThemes")]
+    partial class MergeDuplicateCasedThemes
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -832,102 +835,6 @@ namespace MaarifPlatform.Infrastructure.Persistence.Migrations
                     b.ToTable("question_embeddings", (string)null);
                 });
 
-            modelBuilder.Entity("MaarifPlatform.Domain.Entities.QuestionVariationBatch", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<decimal>("CostUsd")
-                        .HasColumnType("numeric");
-
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid?>("CreatedByUserId")
-                        .HasColumnType("uuid");
-
-                    b.Property<int>("InputTokens")
-                        .HasColumnType("integer");
-
-                    b.Property<int>("LatencyMs")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("Model")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.Property<int>("OutputTokens")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("Provider")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)");
-
-                    b.Property<int>("RequestedCount")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("SourceQuestionText")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<decimal?>("VisionCostUsd")
-                        .HasColumnType("numeric");
-
-                    b.Property<string>("VisionModel")
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.Property<string>("VisionProvider")
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)");
-
-                    b.HasKey("Id");
-
-                    b.ToTable("question_variation_batches", (string)null);
-                });
-
-            modelBuilder.Entity("MaarifPlatform.Domain.Entities.QuestionVariationItem", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid>("BatchId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("CorrectAnswer")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("OptionsJson")
-                        .IsRequired()
-                        .HasColumnType("jsonb");
-
-                    b.Property<int>("OrderNo")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("QuestionText")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<string>("Solution")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("BatchId", "OrderNo")
-                        .IsUnique();
-
-                    b.ToTable("question_variation_items", (string)null);
-                });
-
             modelBuilder.Entity("MaarifPlatform.Domain.Entities.QuestionVersion", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1401,17 +1308,6 @@ namespace MaarifPlatform.Infrastructure.Persistence.Migrations
                     b.Navigation("QuestionVersion");
                 });
 
-            modelBuilder.Entity("MaarifPlatform.Domain.Entities.QuestionVariationItem", b =>
-                {
-                    b.HasOne("MaarifPlatform.Domain.Entities.QuestionVariationBatch", "Batch")
-                        .WithMany("Items")
-                        .HasForeignKey("BatchId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Batch");
-                });
-
             modelBuilder.Entity("MaarifPlatform.Domain.Entities.QuestionVersion", b =>
                 {
                     b.HasOne("MaarifPlatform.Domain.Entities.Question", "Question")
@@ -1505,11 +1401,6 @@ namespace MaarifPlatform.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("MaarifPlatform.Domain.Entities.Question", b =>
                 {
                     b.Navigation("Versions");
-                });
-
-            modelBuilder.Entity("MaarifPlatform.Domain.Entities.QuestionVariationBatch", b =>
-                {
-                    b.Navigation("Items");
                 });
 
             modelBuilder.Entity("MaarifPlatform.Domain.Entities.QuestionVersion", b =>

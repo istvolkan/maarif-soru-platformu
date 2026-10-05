@@ -92,4 +92,18 @@ public class LocalHeuristicLLMProviderTests
         Assert.Equal(3, result.Distractors.Count);
         Assert.Contains(result.CorrectAnswer, result.Options);
     }
+
+    [Fact]
+    public async Task VaryQuestionAsync_ReturnsRequestedCountWithPerturbedNumbers()
+    {
+        var request = new VaryQuestionRequest("Bir çiftlikte 12 inek ve 8 koyun vardır.", Count: 3);
+
+        var result = await _sut.VaryQuestionAsync(request);
+
+        Assert.Equal(3, result.Variations.Count);
+        Assert.Contains("13 inek", result.Variations[0].Question);
+        Assert.Contains("9 koyun", result.Variations[0].Question);
+        Assert.Contains("14 inek", result.Variations[1].Question);
+        Assert.Empty(result.Variations[0].Options);
+    }
 }

@@ -166,6 +166,15 @@ tbody tr:hover {
     font-weight: 600;
 }
 
+.warning {
+    color: #a35a00;
+    background: var(--z-warn-bg);
+    border: 1px solid rgba(163, 90, 0, 0.25);
+    border-radius: var(--z-radius);
+    padding: 0.6rem 0.9rem;
+    font-weight: 600;
+}
+
 .ok {
     color: var(--z-success);
     background: var(--z-success-bg);

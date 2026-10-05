@@ -24,4 +24,16 @@ public class LocalMockVisionProviderTests
 
         Assert.Contains(warnings, w => w.Type == "MOCK_NO_REAL_VALIDATION");
     }
+
+    [Fact]
+    public async Task TranscribePageAsync_ReturnsOneMockBlockWithNoRealCost()
+    {
+        var result = await _sut.TranscribePageAsync([1, 2, 3], pageNo: 7);
+
+        var block = Assert.Single(result.Questions);
+        Assert.Contains("[MOCK]", block.Stem);
+        Assert.Contains("Sayfa 7", block.Stem);
+        Assert.False(block.HasVisual);
+        Assert.Equal(0m, result.Usage.CostUsd);
+    }
 }

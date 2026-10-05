@@ -99,6 +99,7 @@ public static class DependencyInjection
         services.AddScoped<AnalysisOrchestrationService>();
         services.AddScoped<TransformationOrchestrationService>();
         services.AddScoped<GenerationOrchestrationService>();
+        services.AddScoped<QuestionVariationService>();
         services.AddScoped<BookBatchTransformService>();
         services.AddScoped<BookPdfExportService>();
 

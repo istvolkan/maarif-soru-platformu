@@ -1,3 +1,4 @@
+using MaarifPlatform.Application.Extraction;
 using MaarifPlatform.Application.Providers;
 using MaarifPlatform.Application.Vision;
 
@@ -26,6 +27,23 @@ public class LocalMockVisionProvider : IVisionProvider
         [
             new VisualWarning("MOCK_NO_REAL_VALIDATION", "[MOCK] LocalMockVisionProvider gerçek doğrulama yapmaz.", 1.0m)
         ]);
+
+    /// <summary>Gerçek transkripsiyon yapmaz — yalnızca ExtractWithVisionAsync borusunun mekaniğini
+    /// (sayfa render → provider çağrısı → Question/DNA kaydı) ücretsiz doğrulamak için tek, açıkça
+    /// işaretli bir [MOCK] soru bloğu döner.</summary>
+    public Task<PageTranscriptionResult> TranscribePageAsync(byte[] pageImagePng, int pageNo, CancellationToken ct = default)
+    {
+        var block = new TranscribedQuestionBlock(
+            QuestionNo: null,
+            Stem: $"[MOCK] Sayfa {pageNo} ({pageImagePng.Length} bayt) — gerçek transkripsiyon yapılmadı.",
+            Options: [],
+            CorrectAnswer: null,
+            HasVisual: false,
+            VisualDescription: null);
+
+        return Task.FromResult(new PageTranscriptionResult(
+            [block], new AiUsage("local-mock-vision", "mock-v1", 0, 0, 0m, 1)));
+    }
 
     private static VisualObservation BuildMockObservation(string visualType, int imageByteCount)
     {

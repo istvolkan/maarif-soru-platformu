@@ -196,6 +196,178 @@ public class VisualSpecRendererTests
         Assert.Throws<InvalidOperationException>(() => VisualSpecRenderer.RenderToSvg(spec));
     }
 
+    // ============================== FAZ 2B ==============================
+
+    [Fact]
+    public void RenderToSvg_Diagram_RendersNodesAndEdges()
+    {
+        var spec = new VisualSpec(
+            VisualSpecTypes.Diagram,
+            DiagramNodes: [new DiagramNode("a", "Başla"), new DiagramNode("b", "Bitir")],
+            DiagramEdges: [new DiagramEdge("a", "b", "sonra")]);
+
+        var svg = VisualSpecRenderer.RenderToSvg(spec);
+
+        Assert.StartsWith("<svg", svg);
+        Assert.Contains(">Başla<", svg);
+        Assert.Contains(">Bitir<", svg);
+        Assert.Contains("marker-end", svg);
+        Assert.Contains(">sonra<", svg);
+    }
+
+    [Fact]
+    public void RenderToSvg_Diagram_AutoLayoutWhenNoCoordinatesGiven()
+    {
+        var spec = new VisualSpec(
+            VisualSpecTypes.Diagram,
+            DiagramNodes: [new DiagramNode("a", "A"), new DiagramNode("b", "B"), new DiagramNode("c", "C")]);
+
+        var svg = VisualSpecRenderer.RenderToSvg(spec);
+
+        Assert.Equal(3, System.Text.RegularExpressions.Regex.Matches(svg, "<rect[^>]*rx=\"8\"").Count);
+    }
+
+    [Fact]
+    public void RenderToSvg_Diagram_NoNodes_Throws()
+    {
+        var spec = new VisualSpec(VisualSpecTypes.Diagram, DiagramNodes: []);
+        Assert.Throws<InvalidOperationException>(() => VisualSpecRenderer.RenderToSvg(spec));
+    }
+
+    [Fact]
+    public void RenderToSvg_Diagram_EdgeReferencingUnknownNode_Throws()
+    {
+        var spec = new VisualSpec(
+            VisualSpecTypes.Diagram,
+            DiagramNodes: [new DiagramNode("a", "A")],
+            DiagramEdges: [new DiagramEdge("a", "missing")]);
+
+        Assert.Throws<InvalidOperationException>(() => VisualSpecRenderer.RenderToSvg(spec));
+    }
+
+    [Fact]
+    public void RenderToSvg_Infographic_Bar_RendersBarsWithLabels()
+    {
+        var spec = new VisualSpec(
+            VisualSpecTypes.Infographic,
+            Headers: ["Kırmızı", "Mavi"], Rows: [["4", "7"]], ChartKind: ChartKinds.Bar);
+
+        var svg = VisualSpecRenderer.RenderToSvg(spec);
+
+        Assert.Contains(">Kırmızı<", svg);
+        Assert.Contains(">Mavi<", svg);
+        // Arka plan rect'i (BeginSvg, 1) + 2 kategori çubuğu = 3.
+        Assert.Equal(3, System.Text.RegularExpressions.Regex.Matches(svg, "<rect").Count);
+    }
+
+    [Fact]
+    public void RenderToSvg_Infographic_Pie_RendersSlicesWithLegend()
+    {
+        var spec = new VisualSpec(
+            VisualSpecTypes.Infographic,
+            Headers: ["A", "B"], Rows: [["1", "3"]], ChartKind: ChartKinds.Pie);
+
+        var svg = VisualSpecRenderer.RenderToSvg(spec);
+
+        // BeginSvg'nin ok işareti (marker) tanımı da "<path d="M..." içerir (vektörler için, bkz.
+        // DrawVector) — dilim path'lerini ayırt etmek için kendi biçimimizi ("M x y L", boşluk
+        // ayraçlı) ararız, marker'ınki virgül ayraçlıdır ("M0,0 L0,6...").
+        Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(svg, "<path d=\"M [\\d.]+ [\\d.]+ L").Count);
+        Assert.Contains("%25)</text>", svg); // B'nin dilimi 1/4=%25 — legend'de gerçek yüzde hesaplandığını doğrular.
+    }
+
+    [Fact]
+    public void RenderToSvg_Infographic_RowLengthMismatch_Throws()
+    {
+        var spec = new VisualSpec(VisualSpecTypes.Infographic, Headers: ["A", "B"], Rows: [["1"]]);
+        Assert.Throws<InvalidOperationException>(() => VisualSpecRenderer.RenderToSvg(spec));
+    }
+
+    [Fact]
+    public void RenderToSvg_Infographic_NonNumericValue_Throws()
+    {
+        var spec = new VisualSpec(VisualSpecTypes.Infographic, Headers: ["A"], Rows: [["abc"]]);
+        Assert.Throws<InvalidOperationException>(() => VisualSpecRenderer.RenderToSvg(spec));
+    }
+
+    [Fact]
+    public void RenderToSvg_Infographic_AllZero_Throws()
+    {
+        var spec = new VisualSpec(VisualSpecTypes.Infographic, Headers: ["A", "B"], Rows: [["0", "0"]]);
+        Assert.Throws<InvalidOperationException>(() => VisualSpecRenderer.RenderToSvg(spec));
+    }
+
+    [Fact]
+    public void RenderToSvg_VisualScenario_RendersRepeatedIcons()
+    {
+        var spec = new VisualSpec(
+            VisualSpecTypes.VisualScenario,
+            IconGroups: [new IconGroup(DiagramIcons.Circle, 3, "Toplar")]);
+
+        var svg = VisualSpecRenderer.RenderToSvg(spec);
+
+        Assert.Equal(3, System.Text.RegularExpressions.Regex.Matches(svg, "<circle").Count);
+        Assert.Contains(">Toplar<", svg);
+    }
+
+    [Fact]
+    public void RenderToSvg_VisualScenario_CapsDisplayedIconsWithMultiplier()
+    {
+        var spec = new VisualSpec(
+            VisualSpecTypes.VisualScenario,
+            IconGroups: [new IconGroup(DiagramIcons.Square, 500)]);
+
+        var svg = VisualSpecRenderer.RenderToSvg(spec);
+
+        // Arka plan rect'i (1) + en fazla 20 gösterilen ikon karesi = 21.
+        Assert.Equal(21, System.Text.RegularExpressions.Regex.Matches(svg, "<rect").Count);
+        Assert.Contains("500", svg);
+    }
+
+    [Fact]
+    public void RenderToSvg_VisualScenario_NoGroups_Throws()
+    {
+        var spec = new VisualSpec(VisualSpecTypes.VisualScenario, IconGroups: []);
+        Assert.Throws<InvalidOperationException>(() => VisualSpecRenderer.RenderToSvg(spec));
+    }
+
+    [Fact]
+    public void RenderToSvg_VisualScenario_ZeroCount_Throws()
+    {
+        var spec = new VisualSpec(VisualSpecTypes.VisualScenario, IconGroups: [new IconGroup(DiagramIcons.Circle, 0)]);
+        Assert.Throws<InvalidOperationException>(() => VisualSpecRenderer.RenderToSvg(spec));
+    }
+
+    [Fact]
+    public void RenderToSvg_MixedVisual_CombinesShapeAndTable()
+    {
+        var spec = new VisualSpec(
+            VisualSpecTypes.MixedVisual,
+            Shape: "triangle",
+            Vertices: [new PlotPoint(0, 0, "A"), new PlotPoint(4, 0, "B"), new PlotPoint(0, 3, "C")],
+            Headers: ["Kenar", "Uzunluk"], Rows: [["AB", "4"]]);
+
+        var svg = VisualSpecRenderer.RenderToSvg(spec);
+
+        Assert.StartsWith("<svg", svg);
+        Assert.Contains("<polygon", svg);
+        Assert.Contains(">Uzunluk<", svg);
+    }
+
+    [Fact]
+    public void RenderToSvg_MixedVisual_OnlyPrimaryNoTable_Throws()
+    {
+        var spec = new VisualSpec(VisualSpecTypes.MixedVisual, Shape: "circle", Circle: new PlotCircle(0, 0, 5));
+        Assert.Throws<InvalidOperationException>(() => VisualSpecRenderer.RenderToSvg(spec));
+    }
+
+    [Fact]
+    public void RenderToSvg_MixedVisual_OnlyTableNoPrimary_Throws()
+    {
+        var spec = new VisualSpec(VisualSpecTypes.MixedVisual, Headers: ["A"], Rows: [["1"]]);
+        Assert.Throws<InvalidOperationException>(() => VisualSpecRenderer.RenderToSvg(spec));
+    }
+
     /// <summary>Regresyon: sunucunun/geliştirme makinesinin varsayılan kültürü (ör. Türkçe,
     /// ondalık ayıracı virgül) SVG sayısal özelliklerine (x/y/points/r vb.) sızarsa
     /// ("x=\"88,0\"" gibi) tarayıcı bunu geçersiz sayı olarak yorumlar ve metni/şekli

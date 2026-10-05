@@ -23,4 +23,8 @@ public interface ILLMProvider
     Task<ExtractCurriculumResult> ExtractCurriculumStructureAsync(ExtractCurriculumRequest request, CancellationToken ct = default);
 
     Task<CurriculumAlignmentResult> ValidateCurriculumAlignmentAsync(ValidateCurriculumAlignmentRequest request, CancellationToken ct = default);
+
+    /// <summary>Soru Çeşitlendir — Maarif Modeli müfredat doğrulaması gerektirmeyen, kullanıcının
+    /// sağladığı örnek sorudan küçük mantıksal değişikliklerle çoğaltma.</summary>
+    Task<VaryQuestionResult> VaryQuestionAsync(VaryQuestionRequest request, CancellationToken ct = default);
 }

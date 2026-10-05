@@ -12,7 +12,12 @@
 
 <PageTitle>Kitaplar</PageTitle>
 <h1 class="page-title">Kitaplar</h1>
-<p class="page-intro">Maarif model ders kitaplarını buradan yükleyin — yükledikten sonra "Soruları Çıkar" ile PDF'ten soru bloklarını çıkarabilirsiniz.</p>
+<p class="page-intro">
+    Maarif model ders kitaplarını buradan yükleyin — yükledikten sonra "Soruları Çıkar" ile PDF'ten
+    soru bloklarını çıkarabilirsiniz. Matematiksel gösterim (kesir/üs) veya diyagram içeren sayfalar
+    otomatik olarak tespit edilip bir Vision modeliyle yeniden okunur — hangi sayfanın buna ihtiyacı
+    olduğuna sistem kendi karar verir.
+</p>
 
 @if (_error is not null)
 {
@@ -85,7 +90,9 @@ else
                     <td>
                         @if (b.TotalPages is null)
                         {
-                            <button @onclick="() => ExtractAsync(b.Id)">Soruları Çıkar</button>
+                            <button disabled="@(_extractingId == b.Id)" @onclick="() => ExtractAsync(b.Id)">
+                                @(_extractingId == b.Id ? "Çıkarılıyor..." : "Soruları Çıkar")
+                            </button>
                         }
                         <button class="secondary" disabled="@(_deletingId == b.Id)" @onclick="() => DeleteAsync(b.Id)">
                             @(_deletingId == b.Id ? "Siliniyor..." : "Sil")
@@ -109,6 +116,7 @@ else
     private bool _uploading;
     private string? _error;
     private Guid? _deletingId;
+    private Guid? _extractingId;
     private List<BookRow>? _books;
     private List<string> _subjects = new();
     private List<string> _publishers = new() { "MEB" };
@@ -235,6 +243,7 @@ else
     {
         await Guard.RequireAsync("AdminOnly");
         _error = null;
+        _extractingId = bookId;
         await using var scope = ScopeFactory.CreateAsyncScope();
         var extractionService = scope.ServiceProvider.GetRequiredService<BookExtractionService>();
 
@@ -245,6 +254,10 @@ else
         catch (Exception ex)
         {
             _error = ex.Message;
+        }
+        finally
+        {
+            _extractingId = null;
         }
 
         await LoadAsync();

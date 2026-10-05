@@ -58,20 +58,27 @@ public class BookPdfExportService(MaarifDbContext db, IBookFileStorage storage)
             var question = await db.Questions.FirstAsync(q => q.Id == questionId, ct);
 
             byte[]? visualImage = null;
-            // Yalnızca gerçek bir şekil kırpımı (BoundingBoxJson dolu) basılır. Kırpma yoksa
-            // saklanan varlık tüm sayfanın ham ekran görüntüsüdür (bkz. VisionAnalysisService) —
-            // bunu küçük bir kutuya sıkıştırıp basmak, tüm sayfayı (başka sorular dahil) okunaksız
-            // bir minyatür olarak göstermek anlamına gelir; o yüzden bilinçli olarak atlanır.
-            var visualAsset = await db.QuestionVisualAssets
-                .Where(a => a.QuestionId == questionId && a.BoundingBoxJson != null)
-                .OrderByDescending(a => a.CreatedAt)
-                .FirstOrDefaultAsync(ct);
-            if (visualAsset is not null)
+            // 2026-10 düzeltmesi: bu sorgu eskiden yalnızca BoundingBoxJson dolu (kırpılmış) bir
+            // varlık ararken, VisionAnalysisService bir önceki sürümde kırpılmış asset üretmeyi
+            // bırakmıştı (bkz. CaptureOriginalPageImagesAsync'in doc'u — artık TEK varlık hep tam
+            // sayfa, BoundingBoxJson=null) — bu yüzden filtre HİÇBİR ZAMAN eşleşmiyordu ve PDF'te
+            // görsel gerektiren sorularda bile görsel hiç basılmıyordu. Artık BoundingBoxJson'a
+            // bakılmaksızın en son varlık alınır; yalnızca gerçekten görsele ihtiyacı olan sorularda
+            // (RequiresVisual) basılır — aksi halde her soruda (ihtiyacı olmasa bile) kaynak sayfanın
+            // tam görüntüsü dolup PDF'i anlamsızca şişirirdi.
+            if (dna.RequiresVisual)
             {
-                await using var visualStream = await storage.OpenReadAsync(visualAsset.StorageUri, ct);
-                using var buffer = new MemoryStream();
-                await visualStream.CopyToAsync(buffer, ct);
-                visualImage = buffer.ToArray();
+                var visualAsset = await db.QuestionVisualAssets
+                    .Where(a => a.QuestionId == questionId)
+                    .OrderByDescending(a => a.CreatedAt)
+                    .FirstOrDefaultAsync(ct);
+                if (visualAsset is not null)
+                {
+                    await using var visualStream = await storage.OpenReadAsync(visualAsset.StorageUri, ct);
+                    using var buffer = new MemoryStream();
+                    await visualStream.CopyToAsync(buffer, ct);
+                    visualImage = buffer.ToArray();
+                }
             }
 
             questions.Add(new ExportableQuestion(question.QuestionNo, dna.NewQuestion, options, correctLabel, dna.Solution, visualImage));
@@ -103,7 +110,11 @@ public class BookPdfExportService(MaarifDbContext db, IBookFileStorage storage)
                             qCol.Item().Text($"{q.QuestionNo}. {q.Question}").Bold();
                             if (q.VisualImage is not null)
                             {
-                                qCol.Item().PaddingLeft(15).PaddingTop(4).MaxWidth(300).Image(q.VisualImage);
+                                // Kırpılmış bir şekil değil, kaynak PDF sayfasının TAMAMI (bkz.
+                                // GenerateAsync'teki not) — bu yüzden okunabilir kalması için biraz
+                                // daha geniş basılır ve ne olduğu açıkça belirtilir.
+                                qCol.Item().PaddingLeft(15).PaddingTop(4).Text("Kaynak sayfa görüntüsü:").FontSize(9).Italic();
+                                qCol.Item().PaddingLeft(15).MaxWidth(420).Image(q.VisualImage);
                             }
                             for (var i = 0; i < q.Options.Count; i++)
                             {

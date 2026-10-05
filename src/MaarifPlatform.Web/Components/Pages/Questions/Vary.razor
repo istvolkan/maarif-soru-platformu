@@ -1,0 +1,161 @@
+@page "/questions/vary"
+@rendermode InteractiveServer
+@attribute [Authorize(Policy = "QuestionGenerationAccess")]
+@using System.Security.Claims
+@using System.Text.Json
+@using Microsoft.AspNetCore.Components.Forms
+@using MaarifPlatform.Domain.Entities
+@using MaarifPlatform.Infrastructure.Analysis
+@inject IServiceScopeFactory ScopeFactory
+@inject AuthenticationStateProvider AuthState
+
+<PageTitle>Soru Çeşitlendir</PageTitle>
+<h1 class="page-title">Soru Çeşitlendir</h1>
+
+<p class="warning">
+    ⚠️ Bu ekran Türkiye Yüzyılı Maarif Modeli müfredat kazanım/beceri doğrulaması YAPMAZ.
+    Üretilen varyasyonlar yalnızca sağladığınız örnek sorunun küçük/mantıksal değişikliklerle
+    çoğaltılmış halidir ve curriculum-onaylı Soru Havuzu'ndan AYRI, kendi havuzunda saklanır.
+</p>
+
+@if (_error is not null)
+{
+    <p class="error">@_error</p>
+}
+
+<div class="card">
+    <div class="field">
+        <label>Örnek Soru (serbest metin)</label>
+        <textarea @bind="_sourceQuestionText" rows="8" placeholder="Soru kökü, şıklar, doğru cevap vb. her ne ise olduğu gibi yapıştırın."></textarea>
+    </div>
+
+    <div class="field">
+        <label>— veya — Görsel / PDF Yükleyin</label>
+        <InputFile OnChange="OnFileSelected" accept="image/png,image/jpeg,application/pdf" />
+        <p class="note">
+            Yüklenen görsel/PDF, Ayarlar'da yapılandırılmış Vision sağlayıcısı (Gemini/Anthropic/Local)
+            ile okunur ve kaynak soru olarak kullanılır. Metin kutusu da doluysa, görseldeki soruya
+            eklenecek bir talimat olarak eklenir. PNG/JPEG görsel ya da PDF kabul edilir (PDF'in
+            yalnızca ilk sayfası okunur).
+        </p>
+        @if (_selectedFile is not null)
+        {
+            <p class="note">Seçilen dosya: <strong>@_selectedFile.Name</strong> <button type="button" class="secondary" @onclick="ClearFile">Kaldır</button></p>
+        }
+    </div>
+
+    <div class="field">
+        <label>Adet</label>
+        <input type="number" min="1" max="20" @bind="_count" />
+    </div>
+
+    <button type="button" @onclick="GenerateAsync" disabled="@(_running || (string.IsNullOrWhiteSpace(_sourceQuestionText) && _selectedFile is null))">
+        @(_running ? "Üretiliyor…" : "Çeşitlendir")
+    </button>
+</div>
+
+@if (_detectedSourceText is not null)
+{
+    <div class="card">
+        <h2>Görselden/PDF'ten Tespit Edilen Kaynak Soru</h2>
+        <p class="note">Vision sağlayıcısının (@_visionProviderName) okuduğu metin — gerçekten doğru okunduğunu test etmek için.</p>
+        <pre>@_detectedSourceText</pre>
+    </div>
+}
+
+@if (_variations.Count > 0)
+{
+    <div class="card">
+        <h2>Üretilen Varyasyonlar (@_variations.Count)</h2>
+        @foreach (var (item, index) in _variations.Select((v, i) => (v, i)))
+        {
+            <div class="field">
+                <label>Varyasyon @(index + 1)</label>
+                <p>@item.QuestionText</p>
+                @if (item.Options.Count > 0)
+                {
+                    <ul>
+                        @foreach (var option in item.Options)
+                        {
+                            <li>@option</li>
+                        }
+                    </ul>
+                }
+                <p class="note"><strong>Doğru cevap:</strong> @item.CorrectAnswer</p>
+                <p class="note"><strong>Çözüm:</strong> @item.Solution</p>
+            </div>
+        }
+    </div>
+}
+
+@code {
+    private const long MaxFileSizeBytes = 20 * 1024 * 1024; // 20 MB — tek sayfa/görsel için yeterli.
+
+    private string _sourceQuestionText = "";
+    private int _count = 5;
+    private bool _running;
+    private string? _error;
+    private IBrowserFile? _selectedFile;
+    private string? _detectedSourceText;
+    private string? _visionProviderName;
+    private List<VariationItemView> _variations = new();
+
+    private sealed record VariationItemView(string QuestionText, IReadOnlyList<string> Options, string CorrectAnswer, string Solution);
+
+    private void OnFileSelected(InputFileChangeEventArgs e) => _selectedFile = e.File;
+
+    private void ClearFile() => _selectedFile = null;
+
+    private async Task GenerateAsync()
+    {
+        _error = null;
+        _variations = new();
+        _detectedSourceText = null;
+        _running = true;
+        StateHasChanged();
+
+        try
+        {
+            var authState = await AuthState.GetAuthenticationStateAsync();
+            Guid? userId = Guid.TryParse(authState.User.FindFirst(ClaimTypes.NameIdentifier)?.Value, out var id) ? id : null;
+
+            byte[]? imageBytes = null;
+            string? imageContentType = null;
+            if (_selectedFile is not null)
+            {
+                imageContentType = _selectedFile.ContentType;
+                await using var stream = _selectedFile.OpenReadStream(maxAllowedSize: MaxFileSizeBytes);
+                using var buffer = new MemoryStream();
+                await stream.CopyToAsync(buffer);
+                imageBytes = buffer.ToArray();
+            }
+
+            await using var scope = ScopeFactory.CreateAsyncScope();
+            var service = scope.ServiceProvider.GetRequiredService<QuestionVariationService>();
+            var batch = await service.GenerateAsync(_sourceQuestionText, _count, userId, imageBytes, imageContentType);
+
+            if (imageBytes is not null)
+            {
+                _detectedSourceText = batch.SourceQuestionText;
+                _visionProviderName = $"{batch.VisionProvider}/{batch.VisionModel}";
+            }
+
+            _variations = batch.Items
+                .OrderBy(i => i.OrderNo)
+                .Select(i => new VariationItemView(
+                    i.QuestionText,
+                    JsonSerializer.Deserialize<List<string>>(i.OptionsJson) ?? new List<string>(),
+                    i.CorrectAnswer,
+                    i.Solution))
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _running = false;
+        }
+    }
+}

@@ -1,3 +1,4 @@
+using MaarifPlatform.Application.Generation;
 using MaarifPlatform.Application.Providers;
 using MaarifPlatform.Application.Visuals;
 
@@ -108,13 +109,14 @@ public class LocalHeuristicLLMProvider : ILLMProvider
 
     public Task<GenerateQuestionResult> GenerateQuestionAsync(GenerateQuestionRequest request, CancellationToken ct = default)
     {
-        var options = new List<string> { "A seçeneği", "B seçeneği", "C seçeneği", "D seçeneği" };
-        var distractors = new List<DistractorDto>
-        {
-            new("B", null, "[MOCK] Gerçek çeldirici analizi yapılmadı."),
-            new("C", null, "[MOCK] Gerçek çeldirici analizi yapılmadı."),
-            new("D", null, "[MOCK] Gerçek çeldirici analizi yapılmadı.")
-        };
+        // Çoktan seçmeli için şık adedi Grade'e göre sabit (bkz. MultipleChoiceOptionPolicy) —
+        // mock bunu görmezden gelip her zaman 4 dönerse, 9-12. sınıf ÇSS slotları
+        // GenerationOrchestrationService'in yeni şık-adedi doğrulamasında sonsuz regenerate'e düşer.
+        var optionCount = MultipleChoiceOptionPolicy.RequiredOptionCountFor(request.Grade, request.QuestionType) ?? 4;
+        var options = Enumerable.Range(0, optionCount).Select(i => $"{(char)('A' + i)} seçeneği").ToList();
+        var distractors = Enumerable.Range(1, optionCount - 1)
+            .Select(i => new DistractorDto(((char)('A' + i)).ToString(), null, "[MOCK] Gerçek çeldirici analizi yapılmadı."))
+            .ToList();
 
         var (visualRequired, visualSpec) = BuildMockVisualSpec(request.VisualUsage);
 
@@ -149,6 +151,19 @@ public class LocalHeuristicLLMProvider : ILLMProvider
             Vertices: [new PlotPoint(0, 0, "A"), new PlotPoint(4, 0, "B"), new PlotPoint(0, 3, "C")])),
         GenerationVisualUsage.Table => (true, new VisualSpec(
             VisualSpecTypes.Table, Headers: ["x", "[MOCK] f(x)"], Rows: [["0", "0"], ["1", "1"]])),
+        GenerationVisualUsage.Diagram => (true, new VisualSpec(
+            VisualSpecTypes.Diagram,
+            DiagramNodes: [new DiagramNode("a", "[MOCK] Başla"), new DiagramNode("b", "[MOCK] Bitir")],
+            DiagramEdges: [new DiagramEdge("a", "b")])),
+        GenerationVisualUsage.Infographic => (true, new VisualSpec(
+            VisualSpecTypes.Infographic, Headers: ["[MOCK] A", "[MOCK] B"], Rows: [["3", "5"]], ChartKind: ChartKinds.Bar)),
+        GenerationVisualUsage.VisualScenario => (true, new VisualSpec(
+            VisualSpecTypes.VisualScenario,
+            IconGroups: [new IconGroup(DiagramIcons.Circle, 3, "[MOCK] Top")])),
+        GenerationVisualUsage.MixedVisual => (true, new VisualSpec(
+            VisualSpecTypes.MixedVisual, Shape: "triangle",
+            Vertices: [new PlotPoint(0, 0, "A"), new PlotPoint(4, 0, "B"), new PlotPoint(0, 3, "C")],
+            Headers: ["[MOCK] Kenar", "Uzunluk"], Rows: [["AB", "4"]])),
         _ => (false, null)
     };
 
@@ -221,6 +236,30 @@ public class LocalHeuristicLLMProvider : ILLMProvider
 
         return Task.FromResult(result);
     }
+
+    /// <summary>Gerçek "mantıksal çıkarım" yapmaz — kaynak metindeki sayıları basitçe kaydırır,
+    /// geri kalanı aynen tekrarlar. Gerçek çeşitlendirme için Ai:Provider=Anthropic/OpenAI gerekir
+    /// (bkz. AnthropicLLMProvider.BuildVaryQuestionSystemPrompt).</summary>
+    public Task<VaryQuestionResult> VaryQuestionAsync(VaryQuestionRequest request, CancellationToken ct = default)
+    {
+        var variations = Enumerable.Range(1, Math.Max(request.Count, 0))
+            .Select(i => new QuestionVariantDto(
+                Question: $"[MOCK-VARY #{i}] {PerturbNumbers(request.SourceQuestionText, i)}",
+                Options: [],
+                CorrectAnswer: "[MOCK] Gerçek cevap üretilmedi.",
+                Solution: "[MOCK] Gerçek çözüm üretilmedi. Gerçek çeşitlendirme için Ai:Provider=Anthropic kullanın."))
+            .ToList();
+
+        var result = new VaryQuestionResult(
+            variations, new AiUsage("local-heuristic", "mock-v1", EstimateTokens(request), 80 * variations.Count, 0m, 5));
+
+        return Task.FromResult(result);
+    }
+
+    private static string PerturbNumbers(string text, int seed) =>
+        System.Text.RegularExpressions.Regex.Replace(text, @"\d+", m => (int.Parse(m.Value) + seed).ToString());
+
+    private static int EstimateTokens(VaryQuestionRequest request) => request.SourceQuestionText.Length / 4;
 
     private static int EstimateTokens(ValidateCurriculumAlignmentRequest request) =>
         (request.QuestionText.Length + request.LearningOutcomeDescription.Length) / 4;

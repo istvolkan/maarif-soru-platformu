@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using Anthropic;
 using Anthropic.Models.Messages;
+using MaarifPlatform.Application.Extraction;
 using MaarifPlatform.Application.Providers;
 using MaarifPlatform.Application.Vision;
 using MaarifPlatform.Infrastructure.Ai;
@@ -15,6 +16,7 @@ namespace MaarifPlatform.Infrastructure.Vision;
 public class AnthropicVisionProvider : IVisionProvider
 {
     private const string ToolName = "submit_visual_observation";
+    private const string TranscribeToolName = "submit_page_transcription";
 
     private readonly IOptionsMonitor<AnthropicVisionOptions> _optionsMonitor;
     private AnthropicClient? _client;
@@ -74,6 +76,149 @@ public class AnthropicVisionProvider : IVisionProvider
     /// <summary>§6 — ortak deterministik doğrulayıcıya delege eder, ikinci bir AI çağrısı yapmaz.</summary>
     public Task<IReadOnlyList<VisualWarning>> ValidateVisualStructureAsync(VisualObservation observation, CancellationToken ct = default) =>
         Task.FromResult(VisualObservationValidator.Validate(observation));
+
+    public async Task<PageTranscriptionResult> TranscribePageAsync(byte[] pageImagePng, int pageNo, CancellationToken ct = default)
+    {
+        var (options, client) = Current();
+        var parameters = new MessageCreateParams
+        {
+            Model = options.Model,
+            MaxTokens = options.MaxTokens,
+            System = TranscribeSystemPrompt,
+            Tools = [BuildTranscriptionTool()],
+            ToolChoice = new ToolChoiceTool { Name = TranscribeToolName },
+            Messages =
+            [
+                new()
+                {
+                    Role = Role.User,
+                    Content = new List<ContentBlockParam>
+                    {
+                        new ImageBlockParam
+                        {
+                            Source = new Base64ImageSource
+                            {
+                                MediaType = "image/png",
+                                Data = Convert.ToBase64String(pageImagePng)
+                            }
+                        },
+                        new TextBlockParam { Text = "Bu sayfadaki tüm soruları transkribe et." }
+                    }
+                }
+            ]
+        };
+
+        var stopwatch = Stopwatch.StartNew();
+        var response = await client.Messages.Create(parameters, ct);
+        stopwatch.Stop();
+
+        var toolUse = response.Content
+            .Select(b => b.Value)
+            .OfType<ToolUseBlock>()
+            .FirstOrDefault(b => b.Name == TranscribeToolName)
+            ?? throw new InvalidOperationException("Anthropic yanıtında beklenen submit_page_transcription tool_use bloğu bulunamadı.");
+
+        var inputTokens = (int)response.Usage.InputTokens;
+        var outputTokens = (int)response.Usage.OutputTokens;
+        var usage = new AiUsage(
+            Name, options.Model, inputTokens, outputTokens,
+            AnthropicPricing.EstimateCostUsd(options.Model, inputTokens, outputTokens),
+            (int)stopwatch.ElapsedMilliseconds);
+
+        return ParseTranscription(toolUse.Input, usage);
+    }
+
+    /// <summary>Ham PDF metni + regex heuristic'in (IQuestionSegmenter) YERİNE kullanılır — bkz.
+    /// GeminiVisionProvider'daki aynı metnin kopyası (iki bağımsız sağlayıcı aynı talimatı almalı,
+    /// §10 Provider Disagreement karşılaştırmasının anlamlı olması için).</summary>
+    private const string TranscribeSystemPrompt =
+        "Sen bir matematik/fen ders kitabı sayfasının görüntüsünü okuyup üzerindeki soruları " +
+        "yazıya döken bir transkripsiyon uzmanısın.\n\n" +
+        "KURALLAR:\n" +
+        "1. Sayfadaki HER soruyu ayrı bir öğe olarak döndür. Soru numarası görseldeyse question_no'ya yaz.\n" +
+        "2. stem alanına soru kökünü, matematiksel gösterimi (kesir, üs, kök, formül) olabildiğince " +
+        "sadık bir şekilde DÜZ METNE çevirerek yaz (örn. kesir için 'a/b', üs için 'x^2'). Diyagramdaki " +
+        "nokta/etiket isimlerini stem'e KARIŞTIRMA — onlar visual_description alanına ait.\n" +
+        "3. Şıklar varsa options dizisine (label: 'A'/'B'/..., text) yaz; yoksa boş dizi döndür.\n" +
+        "4. Görselde doğrudan yazılı bir doğru cevap/işaretli şık görüyorsan correct_answer'a yaz; " +
+        "emin değilsen boş bırak — TAHMİN ETME.\n" +
+        "5. Sorunun bir şekil/grafik/tablo/diyagrama GERÇEKTEN ihtiyacı varsa has_visual=true yap ve " +
+        "visual_description'a o şeklin/diyagramın ne gösterdiğini (köşe/nokta isimleri, kenar " +
+        "uzunlukları, eksen etiketleri vb. dahil) ayrıntılı yaz. Salt dekoratif görsellerde false.\n" +
+        "6. Bu sayfa bir cevap anahtarı, içindekiler, önsöz gibi SORU OLMAYAN bir sayfaysa questions " +
+        "alanını boş dizi döndür — bir cevap anahtarını soru sanıp UYDURMA.\n" +
+        "7. Okunaksız/belirsiz bir kısım varsa olduğu gibi (belirsiz işaretleyerek) yaz, tahminle doldurma.\n" +
+        "8. Cevabını YALNIZCA submit_page_transcription aracını çağırarak ver.";
+
+    private static Tool BuildTranscriptionTool()
+    {
+        var optionSchema = new
+        {
+            type = "object",
+            properties = new { label = new { type = "string" }, text = new { type = "string" } },
+            required = new[] { "label", "text" }
+        };
+
+        var questionSchema = new
+        {
+            type = "object",
+            properties = new Dictionary<string, object>
+            {
+                ["question_no"] = new { type = "integer" },
+                ["stem"] = new { type = "string" },
+                ["options"] = new { type = "array", items = optionSchema },
+                ["correct_answer"] = new { type = "string" },
+                ["has_visual"] = new { type = "boolean" },
+                ["visual_description"] = new { type = "string" }
+            },
+            required = new[] { "stem", "options", "has_visual" }
+        };
+
+        return new Tool
+        {
+            Name = TranscribeToolName,
+            Description = "Sayfadaki tüm soruların transkripsiyonunu bildir.",
+            InputSchema = new()
+            {
+                Properties = new Dictionary<string, JsonElement>
+                {
+                    ["questions"] = JsonSerializer.SerializeToElement(new { type = "array", items = questionSchema })
+                },
+                Required = ["questions"]
+            }
+        };
+    }
+
+    private static PageTranscriptionResult ParseTranscription(IReadOnlyDictionary<string, JsonElement> input, AiUsage usage)
+    {
+        var blocks = new List<TranscribedQuestionBlock>();
+        if (input.TryGetValue("questions", out var questionsEl) && questionsEl.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var q in questionsEl.EnumerateArray())
+            {
+                var options = new List<OptionCandidate>();
+                if (q.TryGetProperty("options", out var optionsEl) && optionsEl.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var o in optionsEl.EnumerateArray())
+                    {
+                        var label = o.TryGetProperty("label", out var l) ? l.GetString() ?? "" : "";
+                        var text = o.TryGetProperty("text", out var t) ? t.GetString() ?? "" : "";
+                        options.Add(new OptionCandidate(label, text));
+                    }
+                }
+
+                blocks.Add(new TranscribedQuestionBlock(
+                    QuestionNo: q.TryGetProperty("question_no", out var qn) && qn.ValueKind == JsonValueKind.Number ? qn.GetInt32() : null,
+                    Stem: q.TryGetProperty("stem", out var s) ? s.GetString() ?? "" : "",
+                    Options: options,
+                    CorrectAnswer: q.TryGetProperty("correct_answer", out var ca) && ca.ValueKind == JsonValueKind.String ? ca.GetString() : null,
+                    HasVisual: q.TryGetProperty("has_visual", out var hv) && hv.ValueKind is JsonValueKind.True or JsonValueKind.False && hv.GetBoolean(),
+                    VisualDescription: q.TryGetProperty("visual_description", out var vd) && vd.ValueKind == JsonValueKind.String ? vd.GetString() : null));
+            }
+        }
+
+        return new PageTranscriptionResult(blocks, usage);
+    }
 
     private async Task<VisualObservation> CallAnthropicAsync(byte[] imagePng, string taskPrompt, CancellationToken ct)
     {

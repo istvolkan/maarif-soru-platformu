@@ -1,3 +1,5 @@
+using MaarifPlatform.Application.Extraction;
+
 namespace MaarifPlatform.Application.Vision;
 
 /// <summary>§7 Multi-Provider Vision. Mevcut <c>ILLMProvider</c> deseniyle simetrik: somut
@@ -22,4 +24,11 @@ public interface IVisionProvider
     /// <summary>§6 Mathematical/Scientific Fidelity — üretilen gözlemi tutarlılık açısından denetler,
     /// düşük güvenli/belirsiz iddiaları <see cref="VisualWarning"/> olarak döner (boş liste = temiz).</summary>
     Task<IReadOnlyList<VisualWarning>> ValidateVisualStructureAsync(VisualObservation observation, CancellationToken ct = default);
+
+    /// <summary>Görsel-tabanlı extraction (BookExtractionService.ExtractWithVisionAsync) — bir ders
+    /// kitabı sayfasının TAM görüntüsünü okuyup üzerindeki tüm soruları (gövde, şıklar, varsa görülen
+    /// doğru cevap, diyagram var mı/ne anlattığı) yapılandırılmış biçimde transkribe eder. Ham PDF
+    /// metni + regex heuristic'in (QuestionBlock) YERİNE kullanılır — matematiksel gösterim/diyagram
+    /// içeren sayfalarda metin çıkarımı sistematik olarak bozulduğu için (§elestiri).</summary>
+    Task<PageTranscriptionResult> TranscribePageAsync(byte[] pageImagePng, int pageNo, CancellationToken ct = default);
 }

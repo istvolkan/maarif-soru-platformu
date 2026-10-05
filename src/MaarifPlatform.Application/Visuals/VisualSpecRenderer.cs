@@ -24,9 +24,15 @@ public static class VisualSpecRenderer
         VisualSpecTypes.CoordinateSystem => RenderCoordinateSystem(spec),
         VisualSpecTypes.GeometricShape => RenderGeometricShape(spec),
         VisualSpecTypes.Table => RenderTable(spec),
+        VisualSpecTypes.Diagram => RenderDiagram(spec),
+        VisualSpecTypes.Infographic => RenderInfographic(spec),
+        VisualSpecTypes.VisualScenario => RenderVisualScenario(spec),
+        VisualSpecTypes.MixedVisual => RenderMixedVisual(spec),
         _ => throw new InvalidOperationException(
             $"Bilinmeyen görsel türü: '{spec.Type}'. Desteklenen türler: {VisualSpecTypes.FunctionGraph}, " +
-            $"{VisualSpecTypes.CoordinateSystem}, {VisualSpecTypes.GeometricShape}, {VisualSpecTypes.Table}.")
+            $"{VisualSpecTypes.CoordinateSystem}, {VisualSpecTypes.GeometricShape}, {VisualSpecTypes.Table}, " +
+            $"{VisualSpecTypes.Diagram}, {VisualSpecTypes.Infographic}, {VisualSpecTypes.VisualScenario}, " +
+            $"{VisualSpecTypes.MixedVisual}.")
     };
 
     // ============================== FUNCTION GRAPH ==============================
@@ -370,6 +376,358 @@ public static class VisualSpecRenderer
                       $"text-anchor=\"middle\" fill=\"#111827\">{Escape(cells[c])}</text>\n");
             cx += colWidths[c];
         }
+    }
+
+    // ============================== DIAGRAM (Faz 2b) ==============================
+
+    private const double DiagramBoxWidth = 140, DiagramBoxHeight = 56, DiagramHGap = 60, DiagramVGap = 40;
+
+    private static string RenderDiagram(VisualSpec spec)
+    {
+        if (spec.DiagramNodes is null || spec.DiagramNodes.Count == 0)
+        {
+            throw new InvalidOperationException("diagram için en az bir düğüm (diagram_nodes) gerekli.");
+        }
+
+        var nodeIds = spec.DiagramNodes.Select(n => n.Id).ToHashSet();
+        foreach (var edge in spec.DiagramEdges ?? [])
+        {
+            if (!nodeIds.Contains(edge.From) || !nodeIds.Contains(edge.To))
+            {
+                throw new InvalidOperationException($"diagram_edges: '{edge.From}' veya '{edge.To}' id'li bir düğüm bulunamadı.");
+            }
+        }
+
+        // LLM piksel koordinatı uydurmak zorunda değil: X/Y verilmemiş düğümler basit bir
+        // ızgaraya otomatik yerleştirilir (sqrt(n) sütun).
+        var columns = Math.Max(1, (int)Math.Ceiling(Math.Sqrt(spec.DiagramNodes.Count)));
+        var positioned = new Dictionary<string, (double X, double Y)>();
+        for (var i = 0; i < spec.DiagramNodes.Count; i++)
+        {
+            var node = spec.DiagramNodes[i];
+            if (node.X is not null && node.Y is not null)
+            {
+                positioned[node.Id] = (node.X.Value, node.Y.Value);
+            }
+            else
+            {
+                positioned[node.Id] = (
+                    (i % columns) * (DiagramBoxWidth + DiagramHGap),
+                    (i / columns) * (DiagramBoxHeight + DiagramVGap));
+            }
+        }
+
+        var minX = positioned.Values.Min(p => p.X);
+        var minY = positioned.Values.Min(p => p.Y);
+        var maxX = positioned.Values.Max(p => p.X);
+        var maxY = positioned.Values.Max(p => p.Y);
+        var offsetX = Margin - minX;
+        var offsetY = Margin - minY;
+        var width = maxX - minX + DiagramBoxWidth + 2.0 * Margin;
+        var height = maxY - minY + DiagramBoxHeight + 2.0 * Margin;
+
+        var sb = new StringBuilder();
+        sb.Append($"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{Fmt(width)}\" height=\"{Fmt(height)}\" viewBox=\"0 0 {Fmt(width)} {Fmt(height)}\">\n");
+        sb.Append("<defs><marker id=\"diagram-arrow\" markerWidth=\"10\" markerHeight=\"10\" refX=\"9\" refY=\"3\" orient=\"auto\">" +
+                   "<path d=\"M0,0 L0,6 L9,3 z\" fill=\"#374151\" /></marker></defs>\n");
+        sb.Append($"<rect x=\"0\" y=\"0\" width=\"{Fmt(width)}\" height=\"{Fmt(height)}\" fill=\"white\" />\n");
+
+        foreach (var edge in spec.DiagramEdges ?? [])
+        {
+            var (fx, fy) = positioned[edge.From];
+            var (tx, ty) = positioned[edge.To];
+            var x1 = fx + offsetX + DiagramBoxWidth / 2;
+            var y1 = fy + offsetY + DiagramBoxHeight / 2;
+            var x2 = tx + offsetX + DiagramBoxWidth / 2;
+            var y2 = ty + offsetY + DiagramBoxHeight / 2;
+            var marker = edge.Directed ? " marker-end=\"url(#diagram-arrow)\"" : "";
+            sb.Append($"<line x1=\"{Fmt(x1)}\" y1=\"{Fmt(y1)}\" x2=\"{Fmt(x2)}\" y2=\"{Fmt(y2)}\" stroke=\"#374151\" stroke-width=\"2\"{marker} />\n");
+            if (edge.Label is not null)
+            {
+                DrawText(sb, (x1 + x2) / 2, (y1 + y2) / 2 - 6, Escape(edge.Label), "#374151", fontSize: 11);
+            }
+        }
+
+        foreach (var node in spec.DiagramNodes)
+        {
+            var (nx, ny) = positioned[node.Id];
+            var px = nx + offsetX;
+            var py = ny + offsetY;
+            sb.Append($"<rect x=\"{Fmt(px)}\" y=\"{Fmt(py)}\" width=\"{Fmt(DiagramBoxWidth)}\" height=\"{Fmt(DiagramBoxHeight)}\" " +
+                      "rx=\"8\" fill=\"#eef2ff\" stroke=\"#4338ca\" stroke-width=\"2\" />\n");
+            DrawText(sb, px + DiagramBoxWidth / 2, py + DiagramBoxHeight / 2 + 5, Escape(node.Label), "#1e1b4b", fontSize: 13);
+        }
+
+        sb.Append("</svg>");
+        return sb.ToString();
+    }
+
+    // ============================== INFOGRAPHIC (Faz 2b) ==============================
+
+    private static string RenderInfographic(VisualSpec spec)
+    {
+        if (spec.Headers is null || spec.Headers.Count == 0)
+        {
+            throw new InvalidOperationException("infographic için kategori adları (headers) gerekli.");
+        }
+        if (spec.Rows is null || spec.Rows.Count == 0)
+        {
+            throw new InvalidOperationException("infographic için en az bir veri satırı (rows) gerekli.");
+        }
+
+        var valuesRow = spec.Rows[0];
+        if (valuesRow.Count != spec.Headers.Count)
+        {
+            throw new InvalidOperationException(
+                $"infographic veri satırı {valuesRow.Count} değer içeriyor ama {spec.Headers.Count} kategori var — sayılar eşleşmeli.");
+        }
+
+        var values = new double[valuesRow.Count];
+        for (var i = 0; i < valuesRow.Count; i++)
+        {
+            if (!double.TryParse(valuesRow[i], NumberStyles.Float, CultureInfo.InvariantCulture, out values[i]) || values[i] < 0)
+            {
+                throw new InvalidOperationException($"infographic veri değeri negatif olmayan bir sayı olmalı: '{valuesRow[i]}'.");
+            }
+        }
+        if (values.All(v => v == 0))
+        {
+            throw new InvalidOperationException("infographic verilerinin tamamı sıfır olamaz.");
+        }
+
+        var chartKind = string.IsNullOrWhiteSpace(spec.ChartKind) ? ChartKinds.Bar : spec.ChartKind;
+        return chartKind switch
+        {
+            ChartKinds.Bar => RenderBarChart(spec.Headers, values, spec.YLabel),
+            ChartKinds.Pie => RenderPieChart(spec.Headers, values),
+            _ => throw new InvalidOperationException($"Bilinmeyen chart_kind: '{chartKind}'. Desteklenen: {ChartKinds.Bar}, {ChartKinds.Pie}.")
+        };
+    }
+
+    private static string RenderBarChart(IReadOnlyList<string> categories, double[] values, string? yLabel)
+    {
+        var maxValue = values.Max();
+        var barAreaHeight = CanvasHeight - 2.0 * Margin;
+        var slot = (CanvasWidth - 2.0 * Margin) / values.Length;
+        var barWidth = slot * 0.6;
+
+        var sb = new StringBuilder();
+        BeginSvg(sb);
+        sb.Append($"<line x1=\"{Margin}\" y1=\"{CanvasHeight - Margin}\" x2=\"{CanvasWidth - Margin}\" y2=\"{CanvasHeight - Margin}\" stroke=\"#111827\" stroke-width=\"1.5\" />\n");
+
+        for (var i = 0; i < values.Length; i++)
+        {
+            var barHeight = maxValue > 0 ? values[i] / maxValue * barAreaHeight : 0;
+            var x = Margin + slot * i + (slot - barWidth) / 2;
+            var y = CanvasHeight - Margin - barHeight;
+            var color = SeriesColors[i % SeriesColors.Length];
+            sb.Append($"<rect x=\"{Fmt(x)}\" y=\"{Fmt(y)}\" width=\"{Fmt(barWidth)}\" height=\"{Fmt(barHeight)}\" fill=\"{color}\" />\n");
+            DrawText(sb, x + barWidth / 2, y - 6, Escape(FmtLabel(values[i])), "#111827", fontSize: 11);
+            DrawText(sb, x + barWidth / 2, CanvasHeight - Margin + 18, Escape(categories[i]), "#374151", fontSize: 11);
+        }
+
+        if (!string.IsNullOrWhiteSpace(yLabel))
+        {
+            sb.Append($"<text x=\"14\" y=\"{Fmt(CanvasHeight / 2.0)}\" font-size=\"13\" fill=\"#374151\" text-anchor=\"middle\" " +
+                      $"transform=\"rotate(-90 14 {Fmt(CanvasHeight / 2.0)})\">{Escape(yLabel)}</text>\n");
+        }
+
+        EndSvg(sb);
+        return sb.ToString();
+    }
+
+    private static string RenderPieChart(IReadOnlyList<string> categories, double[] values)
+    {
+        var total = values.Sum();
+        var cx = CanvasWidth / 2.0 - 70;
+        var cy = CanvasHeight / 2.0;
+        var r = Math.Min(CanvasWidth, CanvasHeight) / 2.0 - Margin;
+
+        var sb = new StringBuilder();
+        BeginSvg(sb);
+
+        var startAngle = -Math.PI / 2;
+        for (var i = 0; i < values.Length; i++)
+        {
+            var sweep = total > 0 ? values[i] / total * 2 * Math.PI : 0;
+            var endAngle = startAngle + sweep;
+            var x1 = cx + r * Math.Cos(startAngle);
+            var y1 = cy + r * Math.Sin(startAngle);
+            var x2 = cx + r * Math.Cos(endAngle);
+            var y2 = cy + r * Math.Sin(endAngle);
+            var largeArc = sweep > Math.PI ? 1 : 0;
+            var color = SeriesColors[i % SeriesColors.Length];
+            sb.Append($"<path d=\"M {Fmt(cx)} {Fmt(cy)} L {Fmt(x1)} {Fmt(y1)} A {Fmt(r)} {Fmt(r)} 0 {largeArc} 1 {Fmt(x2)} {Fmt(y2)} Z\" " +
+                      $"fill=\"{color}\" stroke=\"white\" stroke-width=\"1.5\" />\n");
+            startAngle = endAngle;
+        }
+
+        var legendX = cx + r + 30;
+        var legendY = Margin;
+        for (var i = 0; i < values.Length; i++)
+        {
+            var color = SeriesColors[i % SeriesColors.Length];
+            var pct = total > 0 ? values[i] / total * 100 : 0;
+            sb.Append($"<rect x=\"{Fmt(legendX)}\" y=\"{Fmt(legendY)}\" width=\"14\" height=\"14\" fill=\"{color}\" />\n");
+            DrawText(sb, legendX + 20, legendY + 12, Escape($"{categories[i]} (%{FmtLabel(pct)})"), "#374151", fontSize: 11, anchor: "start");
+            legendY += 22;
+        }
+
+        EndSvg(sb);
+        return sb.ToString();
+    }
+
+    // ============================== VISUAL SCENARIO (Faz 2b) ==============================
+
+    private const int MaxIconsPerGroupDisplayed = 20;
+    private const double IconSize = 28, IconGap = 10, IconRowHeight = 60;
+
+    private static string RenderVisualScenario(VisualSpec spec)
+    {
+        if (spec.IconGroups is null || spec.IconGroups.Count == 0)
+        {
+            throw new InvalidOperationException("visual_scenario için en az bir ikon grubu (icon_groups) gerekli.");
+        }
+        if (spec.IconGroups.Any(g => g.Count <= 0))
+        {
+            throw new InvalidOperationException("icon_groups içindeki her grup için count pozitif olmalı.");
+        }
+
+        var height = 2.0 * Margin + spec.IconGroups.Count * IconRowHeight;
+
+        var sb = new StringBuilder();
+        sb.Append($"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{CanvasWidth}\" height=\"{Fmt(height)}\" viewBox=\"0 0 {CanvasWidth} {Fmt(height)}\">\n");
+        sb.Append($"<rect x=\"0\" y=\"0\" width=\"{CanvasWidth}\" height=\"{Fmt(height)}\" fill=\"white\" />\n");
+
+        var y = (double)Margin;
+        foreach (var group in spec.IconGroups)
+        {
+            var color = string.IsNullOrWhiteSpace(group.Color) ? "#c6242a" : group.Color!;
+            var displayCount = Math.Min(group.Count, MaxIconsPerGroupDisplayed);
+            var x = (double)Margin;
+            for (var i = 0; i < displayCount; i++)
+            {
+                DrawIcon(sb, group.Icon, x, y, IconSize, color);
+                x += IconSize + IconGap;
+            }
+            if (group.Count > MaxIconsPerGroupDisplayed)
+            {
+                DrawText(sb, x + 10, y + IconSize / 2 + 5, Escape($"× {group.Count}"), "#111827", fontSize: 14, anchor: "start");
+            }
+            var caption = group.Label ?? $"{group.Icon} ({group.Count})";
+            DrawText(sb, Margin, y + IconSize + 16, Escape(caption), "#374151", fontSize: 12, anchor: "start");
+            y += IconRowHeight;
+        }
+
+        sb.Append("</svg>");
+        return sb.ToString();
+    }
+
+    private static void DrawIcon(StringBuilder sb, string icon, double x, double y, double size, string color)
+    {
+        switch (icon)
+        {
+            case DiagramIcons.Square:
+                sb.Append($"<rect x=\"{Fmt(x)}\" y=\"{Fmt(y)}\" width=\"{Fmt(size)}\" height=\"{Fmt(size)}\" fill=\"{color}\" />\n");
+                break;
+            case DiagramIcons.Triangle:
+                var tx1 = x + size / 2;
+                var ty1 = y;
+                var tx2 = x;
+                var ty2 = y + size;
+                var tx3 = x + size;
+                var ty3 = y + size;
+                sb.Append($"<polygon points=\"{Fmt(tx1)},{Fmt(ty1)} {Fmt(tx2)},{Fmt(ty2)} {Fmt(tx3)},{Fmt(ty3)}\" fill=\"{color}\" />\n");
+                break;
+            case DiagramIcons.Star:
+                sb.Append(BuildStarPolygon(x + size / 2, y + size / 2, size / 2, color));
+                break;
+            case DiagramIcons.Circle:
+            default:
+                sb.Append($"<circle cx=\"{Fmt(x + size / 2)}\" cy=\"{Fmt(y + size / 2)}\" r=\"{Fmt(size / 2)}\" fill=\"{color}\" />\n");
+                break;
+        }
+    }
+
+    private static string BuildStarPolygon(double cx, double cy, double r, string color)
+    {
+        var points = new List<string>();
+        for (var i = 0; i < 10; i++)
+        {
+            var angle = Math.PI / 5 * i - Math.PI / 2;
+            var radius = i % 2 == 0 ? r : r * 0.45;
+            var x = cx + radius * Math.Cos(angle);
+            var y = cy + radius * Math.Sin(angle);
+            points.Add($"{Fmt(x)},{Fmt(y)}");
+        }
+        return $"<polygon points=\"{string.Join(" ", points)}\" fill=\"{color}\" />\n";
+    }
+
+    // ============================== MIXED VISUAL (Faz 2b) ==============================
+
+    /// <summary>"Karma Görsel" — gerçek textbook sorularında en sık görülen kombinasyonu
+    /// (bir şekil/grafik + altında onu açıklayan bir tablo) temsil eder. Yeni bir çizim mantığı
+    /// İCAT ETMEZ — zaten test edilmiş RenderFunctionGraph/RenderGeometricShape/
+    /// RenderCoordinateSystem/RenderTable'ın ÜRETTİĞİ SVG'leri (her biri kendi doğrulamasından
+    /// geçmiş) string düzeyinde alt alta birleştirir (ComposeStacked). Bu yüzden İKİ unsur da
+    /// (birincil görsel VE tablo) birlikte zorunludur — yalnızca biri varsa karma değil, tek-tür
+    /// spec'i (function_graph/geometric_shape/coordinate_system/table) kullanılmalı.</summary>
+    private static string RenderMixedVisual(VisualSpec spec)
+    {
+        var hasPrimary = (spec.Functions?.Count ?? 0) > 0
+            || !string.IsNullOrWhiteSpace(spec.Shape)
+            || (spec.Points?.Count ?? 0) > 0 || (spec.Segments?.Count ?? 0) > 0 || (spec.Vectors?.Count ?? 0) > 0;
+        var hasTable = (spec.Headers?.Count ?? 0) > 0 && (spec.Rows?.Count ?? 0) > 0;
+
+        if (!hasPrimary || !hasTable)
+        {
+            throw new InvalidOperationException(
+                "mixed_visual iki unsuru BİRLİKTE gerektirir: bir birincil görsel (functions/shape+vertices/" +
+                "points+segments+vectors) VE bir tablo (headers/rows). Yalnızca biri varsa ilgili tek-tür " +
+                "spec'ini (function_graph/geometric_shape/coordinate_system/table) kullanın.");
+        }
+
+        var primarySvg = spec.Functions is { Count: > 0 }
+            ? RenderFunctionGraph(spec)
+            : !string.IsNullOrWhiteSpace(spec.Shape)
+                ? RenderGeometricShape(spec)
+                : RenderCoordinateSystem(spec);
+        var tableSvg = RenderTable(spec);
+
+        return ComposeStacked(primarySvg, tableSvg);
+    }
+
+    private static string ComposeStacked(string topSvg, string bottomSvg)
+    {
+        const double gap = 20;
+        var (topContent, topWidth, topHeight) = ExtractSvgParts(topSvg);
+        var (bottomContent, bottomWidth, bottomHeight) = ExtractSvgParts(bottomSvg);
+
+        var width = Math.Max(topWidth, bottomWidth);
+        var height = topHeight + gap + bottomHeight;
+
+        var sb = new StringBuilder();
+        sb.Append($"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{Fmt(width)}\" height=\"{Fmt(height)}\" viewBox=\"0 0 {Fmt(width)} {Fmt(height)}\">\n");
+        sb.Append($"<rect x=\"0\" y=\"0\" width=\"{Fmt(width)}\" height=\"{Fmt(height)}\" fill=\"white\" />\n");
+        sb.Append($"<g transform=\"translate({Fmt((width - topWidth) / 2)}, 0)\">\n{topContent}\n</g>\n");
+        sb.Append($"<g transform=\"translate({Fmt((width - bottomWidth) / 2)}, {Fmt(topHeight + gap)})\">\n{bottomContent}\n</g>\n");
+        sb.Append("</svg>");
+        return sb.ToString();
+    }
+
+    /// <summary>Kendi ürettiğimiz, formatı bilinen bir SVG dizesinden (hep düz sayısal
+    /// width/height özniteliği — InvariantCulture, nokta ayıraçlı) iç içeriği ve boyutları çıkarır.</summary>
+    private static (string Content, double Width, double Height) ExtractSvgParts(string svg)
+    {
+        var widthMatch = System.Text.RegularExpressions.Regex.Match(svg, "width=\"([\\d.]+)\"");
+        var heightMatch = System.Text.RegularExpressions.Regex.Match(svg, "height=\"([\\d.]+)\"");
+        var width = double.Parse(widthMatch.Groups[1].Value, CultureInfo.InvariantCulture);
+        var height = double.Parse(heightMatch.Groups[1].Value, CultureInfo.InvariantCulture);
+
+        var startIdx = svg.IndexOf('>') + 1;
+        var endIdx = svg.LastIndexOf("</svg>", StringComparison.Ordinal);
+        var content = svg[startIdx..endIdx];
+        return (content, width, height);
     }
 
     // ============================== ORTAK ÇİZİM YARDIMCILARI ==============================

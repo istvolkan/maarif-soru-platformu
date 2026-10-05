@@ -70,9 +70,10 @@ public sealed record EvaluateQuestionResult(
     IReadOnlyList<string> QualityFlags,
     AiUsage Usage);
 
-/// <summary>§6/§2J Görsel Kullanımı — Faz 2a kapsamındaki gerçek değerler. "None" (Görsel
-/// Kullanma) ve "Auto" (Otomatik — LLM pedagojik gereklilik kararı verir) dışındaki her değer
-/// belirli bir <see cref="VisualSpecTypes"/> türünü ZORUNLU kılar.</summary>
+/// <summary>§6/§2J Görsel Kullanımı. "None" (Görsel Kullanma) ve "Auto" (Otomatik — LLM pedagojik
+/// gereklilik kararı verir) dışındaki her değer belirli bir <see cref="VisualSpecTypes"/> türünü
+/// ZORUNLU kılar. FunctionGraph/CoordinateSystem/GeometricShape/Table Faz 2a kapsamıdır;
+/// Diagram/Infographic/VisualScenario/MixedVisual Faz 2b'de eklendi (2026-10).</summary>
 public static class GenerationVisualUsage
 {
     public const string None = "None";
@@ -81,6 +82,10 @@ public static class GenerationVisualUsage
     public const string CoordinateSystem = "CoordinateSystem";
     public const string GeometricShape = "GeometricShape";
     public const string Table = "Table";
+    public const string Diagram = "Diagram";
+    public const string Infographic = "Infographic";
+    public const string VisualScenario = "VisualScenario";
+    public const string MixedVisual = "MixedVisual";
 }
 
 // §16 Yeni Soru Üretim Modülü. Faz 1 cascading form alanları (SkillCodes/ContentFrameworks/
@@ -172,4 +177,24 @@ public sealed record CurriculumAlignmentResult(
     int LearningOutcomeAlignmentScore,
     int SkillAlignmentScore,
     IReadOnlyList<string> Issues,
+    AiUsage Usage);
+
+// Soru Çeşitlendir — kullanıcı sağladığı örnek bir soruyu küçük, mantıklı değişikliklerle
+// (sayı/isim/bağlam) çoğaltır. GenerateQuestionRequest'ten bilinçli olarak AYRI: Grade/Subject/
+// LearningOutcome/Grounding YOK — bu akış Türkiye Yüzyılı Maarif Modeli müfredat doğrulamasından
+// muaftır (sonuç curriculum-validated Soru Havuzu'ndan ayrı bir havuzda saklanır, bkz.
+// QuestionVariationBatch).
+public sealed record VaryQuestionRequest(
+    string SourceQuestionText,
+    int Count,
+    string? ModelOverride = null);
+
+public sealed record QuestionVariantDto(
+    string Question,
+    IReadOnlyList<string> Options,
+    string CorrectAnswer,
+    string Solution);
+
+public sealed record VaryQuestionResult(
+    IReadOnlyList<QuestionVariantDto> Variations,
     AiUsage Usage);
