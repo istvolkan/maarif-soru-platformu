@@ -76,6 +76,14 @@ public class QuestionDnaConfiguration : IEntityTypeConfiguration<QuestionDna>
         b.HasIndex(e => e.LearningOutcomeCode);
         // Vision Router'ın "requires_visual=true, henüz işlenmemiş" sorgusu bu indekse dayanır.
         b.HasIndex(e => e.RequiresVisual);
+        b.HasIndex(e => e.ArchetypeId);
+
+        // SetNull: bir archetype silinirse (ör. ileride admin bir temizlik yaparsa) üye sorular
+        // kaybolmaz, yalnızca kümesiz kalır.
+        b.HasOne(e => e.Archetype)
+            .WithMany()
+            .HasForeignKey(e => e.ArchetypeId)
+            .OnDelete(DeleteBehavior.SetNull);
     }
 }
 
@@ -117,6 +125,46 @@ public class QuestionEmbeddingConfiguration : IEntityTypeConfiguration<QuestionE
         b.HasIndex(e => new { e.Grade, e.Subject });
         b.HasIndex(e => e.SourceKind);
         b.HasIndex(e => e.QuestionVersionId).IsUnique();
+
+        b.HasOne(e => e.QuestionVersion)
+            .WithMany()
+            .HasForeignKey(e => e.QuestionVersionId)
+            .OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
+public class QuestionArchetypeConfiguration : IEntityTypeConfiguration<QuestionArchetype>
+{
+    public void Configure(EntityTypeBuilder<QuestionArchetype> b)
+    {
+        b.ToTable("question_archetypes");
+        b.HasKey(e => e.Id);
+        b.Property(e => e.Name).HasMaxLength(200).IsRequired();
+        b.Property(e => e.Subject).HasMaxLength(100).IsRequired();
+        b.Property(e => e.MaarifAffinity).HasPrecision(5, 2);
+        b.Property(e => e.QualityScore).HasPrecision(5, 2);
+        // QuestionEmbeddingConfiguration'daki 1536 boyut varsayımıyla AYNI — aynı IEmbeddingProvider paylaşılır.
+        b.Property(e => e.CentroidEmbedding).HasColumnType("vector(1536)").IsRequired();
+        b.HasIndex(e => e.Subject);
+    }
+}
+
+public class QuestionArchetypeMemberConfiguration : IEntityTypeConfiguration<QuestionArchetypeMember>
+{
+    public void Configure(EntityTypeBuilder<QuestionArchetypeMember> b)
+    {
+        b.ToTable("question_archetype_members");
+        b.HasKey(e => e.Id);
+        // §54 "Pattern P-119, Kitap A → 14 kez" bakımından bir soru versiyonu bir archetype'a
+        // yalnızca BİR kez üye olabilir (yeniden analiz edilirse yeni bir QuestionVersion/DNA
+        // satırı zaten oluşur, bu eski üyeliği DEĞİŞTİRMEZ).
+        b.HasIndex(e => new { e.ArchetypeId, e.QuestionVersionId }).IsUnique();
+        b.HasIndex(e => new { e.ArchetypeId, e.BookId });
+
+        b.HasOne(e => e.Archetype)
+            .WithMany(e => e.Members)
+            .HasForeignKey(e => e.ArchetypeId)
+            .OnDelete(DeleteBehavior.Cascade);
 
         b.HasOne(e => e.QuestionVersion)
             .WithMany()

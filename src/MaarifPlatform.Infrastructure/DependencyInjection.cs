@@ -13,6 +13,7 @@ using MaarifPlatform.Infrastructure.Curriculum;
 using MaarifPlatform.Infrastructure.Export;
 using MaarifPlatform.Infrastructure.Generation;
 using MaarifPlatform.Infrastructure.Extraction;
+using MaarifPlatform.Infrastructure.Intelligence;
 using MaarifPlatform.Infrastructure.Persistence;
 using MaarifPlatform.Infrastructure.Rag;
 using MaarifPlatform.Infrastructure.Storage;
@@ -70,6 +71,7 @@ public static class DependencyInjection
         services.AddScoped<CurriculumExtractionService>();
         services.AddScoped<CurriculumQueryService>();
         services.AddScoped<QuestionSimilarityService>();
+        services.AddScoped<ArchetypeClusteringService>();
 
         // §4/§H/§8/§10 Analysis + Judge Provider Disagreement. Birincil/ikincil sağlayıcı seçimi
         // Sprint 11'den itibaren TAMAMEN çalışma-zamanlı (IOptionsMonitor + ILLMProviderFactory) —

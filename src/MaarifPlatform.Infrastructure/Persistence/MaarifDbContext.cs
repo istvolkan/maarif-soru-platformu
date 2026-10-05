@@ -21,6 +21,10 @@ public class MaarifDbContext(DbContextOptions<MaarifDbContext> options) : DbCont
     public DbSet<QuestionVisualAsset> QuestionVisualAssets => Set<QuestionVisualAsset>();
     public DbSet<QuestionEmbedding> QuestionEmbeddings => Set<QuestionEmbedding>();
 
+    // Question Intelligence Engine Faz 3 — §45/§46/§54 Pattern Library/Archetype kümeleme.
+    public DbSet<QuestionArchetype> QuestionArchetypes => Set<QuestionArchetype>();
+    public DbSet<QuestionArchetypeMember> QuestionArchetypeMembers => Set<QuestionArchetypeMember>();
+
     // Soru Çeşitlendir — curriculum-validated Soru Havuzu'ndan bilinçli olarak AYRI (bkz.
     // QuestionVariationBatch'in kendi doc yorumu).
     public DbSet<QuestionVariationBatch> QuestionVariationBatches => Set<QuestionVariationBatch>();

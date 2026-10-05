@@ -5,6 +5,7 @@ using MaarifPlatform.Application.Rubric;
 using MaarifPlatform.Domain.Entities;
 using MaarifPlatform.Domain.Enums;
 using MaarifPlatform.Infrastructure.Ai;
+using MaarifPlatform.Infrastructure.Intelligence;
 using MaarifPlatform.Infrastructure.Persistence;
 using MaarifPlatform.Infrastructure.Rag;
 using MaarifPlatform.Infrastructure.Vision;
@@ -32,7 +33,8 @@ public class AnalysisOrchestrationService(
     ILLMProviderFactory providerFactory,
     IOptionsMonitor<AiRoutingOptions> aiRouting,
     ReferenceSearchService searchService,
-    VisionAnalysisService visionAnalysisService)
+    VisionAnalysisService visionAnalysisService,
+    ArchetypeClusteringService archetypeClustering)
 {
     public async Task<AnalysisSummary> AnalyzeAsync(Guid questionId, CancellationToken ct = default)
     {
@@ -104,12 +106,12 @@ public class AnalysisOrchestrationService(
         // yüzden başarısız olursa Analysis'in geri kalanını ASLA engellemez (try/catch ile yutulur).
         // Alanlar henüz gerçek migration'a geçirilmedi — ExtensionsJson'da "dna_v2" ön ekiyle
         // saklanır (bkz. ExtensionsJson'ın revisionSuggestion için kullanıldığı mevcut konvansiyon).
-        string? dnaExtensionsJson = null;
+        AnalyzeQuestionDnaResult? dnaResult = null;
         try
         {
             var dnaRequest = new AnalyzeQuestionDnaRequest(
                 originalDna.OriginalQuestion ?? string.Empty, options.Select(o => o.Text).ToList(), originalDna.OriginalAnswer);
-            var dnaResult = await llmProvider.AnalyzeQuestionDnaAsync(dnaRequest, ct);
+            dnaResult = await llmProvider.AnalyzeQuestionDnaAsync(dnaRequest, ct);
 
             db.AiRuns.Add(new AiRun
             {
@@ -123,33 +125,6 @@ public class AnalysisOrchestrationService(
                 CostUsd = dnaResult.Usage.CostUsd,
                 LatencyMs = dnaResult.Usage.LatencyMs
             });
-
-            var extensions = new Dictionary<string, string>();
-            if (dnaResult.QuestionArchetype is { Length: > 0 })
-            {
-                extensions["dna_v2_question_archetype"] = dnaResult.QuestionArchetype;
-            }
-            if (dnaResult.ReasoningPattern.Count > 0)
-            {
-                extensions["dna_v2_reasoning_pattern"] = JsonSerializer.Serialize(dnaResult.ReasoningPattern);
-            }
-            if (dnaResult.MisconceptionTargets.Count > 0)
-            {
-                extensions["dna_v2_misconception_targets"] = JsonSerializer.Serialize(dnaResult.MisconceptionTargets);
-            }
-            if (dnaResult.DistractorLogic.Count > 0)
-            {
-                extensions["dna_v2_distractor_logic"] = JsonSerializer.Serialize(dnaResult.DistractorLogic);
-            }
-            if (dnaResult.AbstractionLevel is { Length: > 0 })
-            {
-                extensions["dna_v2_abstraction_level"] = dnaResult.AbstractionLevel;
-            }
-
-            if (extensions.Count > 0)
-            {
-                dnaExtensionsJson = JsonSerializer.Serialize(extensions);
-            }
         }
         catch (Exception)
         {
@@ -189,6 +164,58 @@ public class AnalysisOrchestrationService(
             PayloadJson = JsonSerializer.Serialize(result),
             CreatedBy = llmProvider.Name
         };
+
+        // Faz 2 dna_v2_* alanları (bkz. yukarıdaki try/catch) + Faz 3 archetype kümelemesi —
+        // version.Id burada (henüz SaveChanges edilmemiş olsa da) zaten atanmış durumda (bkz.
+        // Entity base'in Guid.NewGuid() varsayılanı), bu yüzden QuestionArchetypeMember kaydı
+        // bu QuestionVersion'a şimdiden güvenle referans verebilir.
+        string? dnaExtensionsJson = null;
+        Guid? archetypeId = null;
+        if (dnaResult is not null)
+        {
+            var extensions = new Dictionary<string, string>();
+            if (dnaResult.QuestionArchetype is { Length: > 0 })
+            {
+                extensions["dna_v2_question_archetype"] = dnaResult.QuestionArchetype;
+            }
+            if (dnaResult.ReasoningPattern.Count > 0)
+            {
+                extensions["dna_v2_reasoning_pattern"] = JsonSerializer.Serialize(dnaResult.ReasoningPattern);
+            }
+            if (dnaResult.MisconceptionTargets.Count > 0)
+            {
+                extensions["dna_v2_misconception_targets"] = JsonSerializer.Serialize(dnaResult.MisconceptionTargets);
+            }
+            if (dnaResult.DistractorLogic.Count > 0)
+            {
+                extensions["dna_v2_distractor_logic"] = JsonSerializer.Serialize(dnaResult.DistractorLogic);
+            }
+            if (dnaResult.AbstractionLevel is { Length: > 0 })
+            {
+                extensions["dna_v2_abstraction_level"] = dnaResult.AbstractionLevel;
+            }
+
+            if (extensions.Count > 0)
+            {
+                dnaExtensionsJson = JsonSerializer.Serialize(extensions);
+            }
+
+            // §45/§46/§54 Faz 3 — aynı şekilde bir kalite kapısı DEĞİL, kümeleme başarısız
+            // olursa (embedding sağlayıcı hatası vb.) soru archetype'sız kalır, Analysis akışı
+            // hiç etkilenmez.
+            try
+            {
+                var featureText = BuildDnaFeatureText(dnaResult, result);
+                var classification = await archetypeClustering.ClassifyAsync(
+                    featureText, grade, subject, visionResult.Observation?.VisualType ?? visionResult.Decision.VisualType,
+                    rubric.WeightedScore, question.BookId, version.Id, ct);
+                archetypeId = classification?.ArchetypeId;
+            }
+            catch (Exception)
+            {
+                // Sessizce atlanır — bkz. yukarıdaki not.
+            }
+        }
 
         var groundingInsufficient = grounding.Count == 0;
 
@@ -248,6 +275,10 @@ public class AnalysisOrchestrationService(
             // Faz 2 (Question Intelligence Engine) — LLM-B'nin çıkardığı dna_v2_* alanları (bkz.
             // yukarıdaki try/catch). Henüz gerçek kolon değil, bilinçli olarak ExtensionsJson'da.
             ExtensionsJson = dnaExtensionsJson,
+            // Faz 3 (Question Intelligence Engine) — deterministik en-yakın-komşu kümelemeyle
+            // atanan archetype (bkz. ArchetypeClusteringService). Null = DNA analizi/kümeleme
+            // başarısız oldu veya çalışmadı; soru bu durumda kümesiz kalır, hiçbir şey bozulmaz.
+            ArchetypeId = archetypeId,
 
             // Vision mimarisi — requires_visual=false ise tüm alanlar null/default kalır (§9).
             RequiresVisual = visionResult.Decision.RequiresVisual,
@@ -288,5 +319,36 @@ public class AnalysisOrchestrationService(
         return new AnalysisSummary(
             rubric.WeightedScore, rubric.Level.ToString(), editorRequired, grounding.Count,
             visionResult.Decision.RequiresVisual, result.Usage);
+    }
+
+    /// <summary>§45/§46 Faz 3 kümeleme girdisi — BİLİNÇLİ OLARAK ham soru metnini DEĞİL, Faz 1/2'nin
+    /// çıkardığı YAPISAL alanları birleştirir (bkz. ArchetypeClusteringService doc'u: amaç ifade
+    /// benzerliği değil YAPISAL benzerlik). Hiçbir alan yoksa boş string döner — çağıran taraf bu
+    /// durumda kümelemeyi hiç yapmaz.</summary>
+    private static string BuildDnaFeatureText(AnalyzeQuestionDnaResult dnaResult, AnalyzeQuestionResult analysisResult)
+    {
+        var parts = new List<string>();
+        if (dnaResult.ReasoningPattern.Count > 0)
+        {
+            parts.Add("REASONING: " + string.Join(" -> ", dnaResult.ReasoningPattern));
+        }
+        if (dnaResult.AbstractionLevel is { Length: > 0 } abstractionLevel)
+        {
+            parts.Add("ABSTRACTION: " + abstractionLevel);
+        }
+        if (analysisResult.RepresentationTypes is { Count: > 0 } representationTypes)
+        {
+            parts.Add("REPRESENTATION: " + string.Join(", ", representationTypes));
+        }
+        if (analysisResult.ContextType is { Length: > 0 } contextType)
+        {
+            parts.Add("CONTEXT: " + contextType);
+        }
+        if (analysisResult.CognitiveLevel is { Length: > 0 } cognitiveLevel)
+        {
+            parts.Add("COGNITIVE: " + cognitiveLevel);
+        }
+
+        return string.Join(" | ", parts);
     }
 }
