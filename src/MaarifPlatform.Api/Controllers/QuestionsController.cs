@@ -1,5 +1,6 @@
 using System.Text.Json;
 using MaarifPlatform.Api.Dtos;
+using MaarifPlatform.Application.Extraction;
 using MaarifPlatform.Application.Providers;
 using MaarifPlatform.Domain.Enums;
 using MaarifPlatform.Infrastructure.Analysis;
@@ -118,9 +119,19 @@ public class QuestionsController(
             .Select(a => new AlignmentScoreResponse(a.Criterion, a.Score, a.Weight, a.Explanation, a.SourceRef, a.IsCriticalGate))
             .ToList();
 
-        var newOptions = string.IsNullOrWhiteSpace(latestVersion?.Dna?.NewOptionsJson)
-            ? []
-            : JsonSerializer.Deserialize<List<string>>(latestVersion!.Dna!.NewOptionsJson!) ?? [];
+        // §16 doğrudan üretilen sorular (GenerationOrchestrationService.PersistGeneratedQuestionAsync)
+        // Transform'dan hiç geçmez — eski kayıtlarda New* alanları null, içerik yalnızca
+        // Original*'da olabilir (bkz. BookPdfExportService'teki aynı fallback, 2026-10).
+        // OriginalOptionsJson, NewOptionsJson'dan FARKLI şekilde (OptionCandidate Label+Text
+        // nesneleri, düz string değil) saklanır — bu yüzden ayrı deserialize edilir.
+        var dna = latestVersion?.Dna;
+        var resolvedQuestion = dna?.NewQuestion ?? dna?.OriginalQuestion;
+        var resolvedAnswer = dna?.CorrectAnswer ?? dna?.OriginalAnswer;
+        var newOptions = dna?.NewOptionsJson is { } newOptionsJson
+            ? JsonSerializer.Deserialize<List<string>>(newOptionsJson) ?? []
+            : dna?.OriginalOptionsJson is { } originalOptionsJson
+                ? JsonSerializer.Deserialize<List<OptionCandidate>>(originalOptionsJson)?.Select(o => o.Text).ToList() ?? []
+                : [];
 
         var distractors = (latestVersion?.Distractors ?? [])
             .Select(d => new DistractorResponse(d.OptionLabel, d.MisconceptionCode, d.Explanation))
@@ -149,9 +160,9 @@ public class QuestionsController(
             latestVersion?.Dna?.VisualConfidence,
             latestVersion?.Dna?.VisualDescription,
             alignmentScores,
-            latestVersion?.Dna?.NewQuestion,
+            resolvedQuestion,
             newOptions,
-            latestVersion?.Dna?.CorrectAnswer,
+            resolvedAnswer,
             latestVersion?.Dna?.Solution,
             distractors,
             latestVersion?.Dna?.QualityScore,

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using MaarifPlatform.Application.Extraction;
 using MaarifPlatform.Application.Storage;
 using MaarifPlatform.Domain.Entities;
 using MaarifPlatform.Domain.Enums;
@@ -48,11 +49,27 @@ public class BookPdfExportService(MaarifDbContext db, IBookFileStorage storage)
                 .FirstOrDefaultAsync(ct);
 
             var dna = version?.Dna;
-            if (dna?.NewQuestion is null || dna.NewOptionsJson is null || dna.CorrectAnswer is null)
+            // §16 doğrudan üretilen sorular (GenerationOrchestrationService.PersistGeneratedQuestionAsync)
+            // hiç Transform'dan geçmez — Original* alanlarına yazılır, New* alanları hep null kalır
+            // (bu bir veri bozukluğu değil, tasarım gereği: Transform yalnızca kitaptan çıkarılmış
+            // soruları "yükseltir"). Bu export eskiden yalnızca New*'ı okuduğu için AiApproved/
+            // EditorApproved durumuna gelmiş TÜM üretilmiş sorular sessizce atlanıyordu — PDF'te
+            // başlık/cevap anahtarı/çözümler bölümleri neredeyse boş kalıyordu (gerçek kullanıcı
+            // raporu, 2026-10). Artık New* yoksa Original*'a düşülür. DİKKAT: NewOptionsJson düz
+            // string listesi iken OriginalOptionsJson (hem extraction hem generation'da) Label+Text
+            // içeren OptionCandidate listesi — iki alan FARKLI ŞEKİLLİ, aynı List<string> ile
+            // deserialize edilemez.
+            var questionText = dna?.NewQuestion ?? dna?.OriginalQuestion;
+            var correctAnswer = dna?.CorrectAnswer ?? dna?.OriginalAnswer;
+            List<string>? options = dna?.NewOptionsJson is { } newOptionsJson
+                ? JsonSerializer.Deserialize<List<string>>(newOptionsJson)
+                : dna?.OriginalOptionsJson is { } originalOptionsJson
+                    ? JsonSerializer.Deserialize<List<OptionCandidate>>(originalOptionsJson)?.Select(o => o.Text).ToList()
+                    : null;
+            if (dna is null || questionText is null || options is null || correctAnswer is null)
                 continue;
 
-            var options = JsonSerializer.Deserialize<List<string>>(dna.NewOptionsJson) ?? [];
-            var correctIndex = options.FindIndex(o => o == dna.CorrectAnswer);
+            var correctIndex = options.FindIndex(o => o == correctAnswer);
             var correctLabel = correctIndex >= 0 && correctIndex < Labels.Length ? Labels[correctIndex] : "-";
 
             var question = await db.Questions.FirstAsync(q => q.Id == questionId, ct);
@@ -81,7 +98,7 @@ public class BookPdfExportService(MaarifDbContext db, IBookFileStorage storage)
                 }
             }
 
-            questions.Add(new ExportableQuestion(question.QuestionNo, dna.NewQuestion, options, correctLabel, dna.Solution, visualImage));
+            questions.Add(new ExportableQuestion(question.QuestionNo, questionText, options, correctLabel, dna.Solution, visualImage));
         }
 
         var document = Document.Create(container =>

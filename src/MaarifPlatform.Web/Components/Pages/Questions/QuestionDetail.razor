@@ -3,6 +3,7 @@
 @inject MaarifPlatform.Web.Security.OperationGuard Guard
 @attribute [Authorize(Policy = "QuestionPoolAccess")]
 @using System.Text.Json
+@using MaarifPlatform.Application.Extraction
 @using MaarifPlatform.Domain.Enums
 @using MaarifPlatform.Infrastructure.Analysis
 @using MaarifPlatform.Infrastructure.Persistence
@@ -197,9 +198,17 @@ else
             .OrderByDescending(v => v.VersionNo)
             .FirstOrDefaultAsync();
 
-        var newOptions = string.IsNullOrWhiteSpace(latestVersion?.Dna?.NewOptionsJson)
-            ? new List<string>()
-            : JsonSerializer.Deserialize<List<string>>(latestVersion!.Dna!.NewOptionsJson!) ?? new List<string>();
+        // §16 doğrudan üretilen sorular Transform'dan geçmez — eski kayıtlarda New* alanları
+        // null olabilir, içerik Original*'a düşer (bkz. QuestionsController.GetById'deki aynı
+        // fallback, 2026-10).
+        var dna = latestVersion?.Dna;
+        var resolvedQuestion = dna?.NewQuestion ?? dna?.OriginalQuestion;
+        var resolvedAnswer = dna?.CorrectAnswer ?? dna?.OriginalAnswer;
+        var newOptions = dna?.NewOptionsJson is { } newOptionsJson
+            ? JsonSerializer.Deserialize<List<string>>(newOptionsJson) ?? new List<string>()
+            : dna?.OriginalOptionsJson is { } originalOptionsJson
+                ? JsonSerializer.Deserialize<List<OptionCandidate>>(originalOptionsJson)?.Select(o => o.Text).ToList() ?? new List<string>()
+                : new List<string>();
 
         var (qualityFlags, criticalFailures) = SplitQualityFlags(latestVersion?.Dna?.QualityFlagsJson);
 
@@ -216,7 +225,7 @@ else
             latestVersion?.Dna?.VisualConfidence, latestVersion?.Dna?.VisualDescription,
             (analyzedVersion?.AlignmentScores ?? new List<AlignmentScore>())
                 .Select(a => new AlignmentRow(a.Criterion, a.Score, a.Weight, a.Explanation, a.IsCriticalGate)).ToList(),
-            latestVersion?.Dna?.NewQuestion, newOptions, latestVersion?.Dna?.CorrectAnswer, latestVersion?.Dna?.Solution,
+            resolvedQuestion, newOptions, resolvedAnswer, latestVersion?.Dna?.Solution,
             (latestVersion?.Distractors ?? new List<Distractor>())
                 .Select(d => new DistractorRow(d.OptionLabel, d.MisconceptionCode, d.Explanation)).ToList(),
             latestVersion?.Dna?.QualityScore, passed, qualityFlags, criticalFailures);

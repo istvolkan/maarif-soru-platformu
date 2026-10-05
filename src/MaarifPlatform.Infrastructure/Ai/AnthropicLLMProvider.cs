@@ -1095,10 +1095,16 @@ public class AnthropicLLMProvider : ILLMProvider
         // §9 maliyet ilkesi: önceki deneme reddedildiyse gerekçeyi kör bir tekrar yerine somut
         // düzeltme talimatı olarak ver — aksi halde aynı hata büyük olasılıkla tekrarlanır ve
         // Generation+CurriculumValidation çağrıları boşa (0 sonuçla) harcanmış olur.
-        var requiredOptionCount = MultipleChoiceOptionPolicy.RequiredOptionCountFor(request.Grade, request.QuestionType);
-        var optionCountLine = requiredOptionCount is int n
-            ? $"\n        - Şık adedi: TAM OLARAK {n} şık (Sınıf {request.Grade} için sabit kural, bundan az/çok ASLA)."
-            : "";
+        // "Çoktan Seçmeli" dışındaki bazı tipler (Tablo/Grafik/Görsel Yorumlama, Senaryo/Problem
+        // Temelli) de LLM tarafından şıklı üretilebilir — bu yüzden talimat tipin KENDİSİNE değil,
+        // "şıklı üretirsen" koşuluna bağlanır (asıl GARANTİ GenerationOrchestrationService'teki
+        // Options.Count>0 kontrolüdür, bu yalnızca ilk denemede isabeti artırır).
+        var requiredCountForGrade = MultipleChoiceOptionPolicy.RequiredOptionCount(request.Grade);
+        var optionCountLine = MultipleChoiceOptionPolicy.IsMultipleChoice(request.QuestionType)
+            ? $"\n        - Şık adedi: TAM OLARAK {requiredCountForGrade} şık (Sınıf {request.Grade} için sabit kural, bundan az/çok ASLA)."
+            : $"\n        - Bu soru şıklı (çoktan seçmeli biçimli) üretilecekse şık adedi TAM OLARAK " +
+              $"{requiredCountForGrade} olmalı (Sınıf {request.Grade} için sabit kural); açık uçlu/eşleştirme " +
+              "gibi gerçekten şıksız bir biçimse options alanını boş bırak.";
 
         var previousAttemptBlock = string.IsNullOrWhiteSpace(request.PreviousAttemptFeedback)
             ? ""

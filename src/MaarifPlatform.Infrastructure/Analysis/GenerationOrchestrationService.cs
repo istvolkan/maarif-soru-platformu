@@ -265,12 +265,25 @@ public class GenerationOrchestrationService(
                 // şema seviyesinde sağlayıcıya zaten bildirilir, ama bu asıl GARANTİ kapısı: LLM
                 // (veya mock) kurala uymazsa slot diğer kalite kontrolleri gibi regenerate edilir,
                 // yanlış şık adediyle ASLA kalıcılaştırılmaz.
-                var requiredOptionCount = MultipleChoiceOptionPolicy.RequiredOptionCountFor(request.Grade, item.QuestionType);
-                if (requiredOptionCount is int requiredCount && generated.Options.Count != requiredCount)
+                //
+                // Bilinçli olarak item.QuestionType == "Çoktan Seçmeli" EŞLEŞMESİNE değil,
+                // generated.Options.Count > 0'a (LLM'in GERÇEKTEN şıklı ürettiğine) bakılır —
+                // "Tablo Yorumlama"/"Grafik Yorumlama"/"Görsel Yorumlama"/"Senaryo Temelli"/
+                // "Problem Temelli" gibi tipler açıkça "Çoktan Seçmeli" ETİKETLİ olmasa da LLM
+                // bunları sıkça şıklı üretiyor (şema bu tiplere genel "3-6 şık" izni veriyor,
+                // Grade'e özel sabit sayı değil) — eski kod bu durumda hiç kontrol etmediği için
+                // lise sorularında 4 ile 5 arası karışık şık sayısı kalıcılaşıyordu (gerçek
+                // kullanıcı raporu, 2026-10). Açık uçlu/eşleştirme gibi GERÇEKTEN şıksız tipler
+                // zaten Options.Count==0 döner, bu kontrolden hiç etkilenmez.
+                if (generated.Options.Count > 0)
                 {
-                    attemptMessages.Add(
-                        $"Çoktan seçmeli soru için {requiredCount} şık üretilmeliydi, {generated.Options.Count} şık üretildi.");
-                    continue;
+                    var requiredCount = MultipleChoiceOptionPolicy.RequiredOptionCount(request.Grade);
+                    if (generated.Options.Count != requiredCount)
+                    {
+                        attemptMessages.Add(
+                            $"Şıklı (çoktan seçmeli biçimli) soru için {requiredCount} şık üretilmeliydi, {generated.Options.Count} şık üretildi.");
+                        continue;
+                    }
                 }
 
                 yield return new GenerationProgressEvent(slotNo, blueprint.Count,
@@ -458,6 +471,14 @@ public class GenerationOrchestrationService(
             OriginalQuestion = result.Question,
             OriginalOptionsJson = JsonSerializer.Serialize(options),
             OriginalAnswer = result.CorrectAnswer,
+            // "Dönüşüm çıktısı" (New*/CorrectAnswer/Solution) alanları normalde yalnızca Transform'un
+            // doldurduğu alanlardır, ama bu akışın hiç Transform adımı yoktur (LLM'in ürettiği içerik
+            // zaten nihai) — CorrectAnswer/Solution zaten burada dolduruluyordu, NewQuestion/
+            // NewOptionsJson da AYNI NEDENLE burada doldurulmalı; aksi halde "Soru Detayı" sayfası
+            // (QuestionsController.GetById, yalnızca New* okur) ve PDF export (2026-10'da Original*'a
+            // düşmeyi öğrendi, ama kaynakta da tutarlı olmak daha sağlam) bu soruları boş gösterir.
+            NewQuestion = result.Question,
+            NewOptionsJson = JsonSerializer.Serialize(result.Options),
             Solution = result.Solution,
             CorrectAnswer = result.CorrectAnswer,
             DnaSchemaVersion = "1.0",
