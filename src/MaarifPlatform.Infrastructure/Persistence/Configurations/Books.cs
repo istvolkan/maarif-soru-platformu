@@ -13,7 +13,11 @@ public class BookConfiguration : IEntityTypeConfiguration<Book>
         b.Property(e => e.Title).HasMaxLength(500).IsRequired();
         b.Property(e => e.Subject).HasMaxLength(100).IsRequired();
         b.Property(e => e.Publisher).HasMaxLength(200);
+        b.Property(e => e.AuthorName).HasMaxLength(300);
         b.Property(e => e.SourceType).HasConversion<string>().HasMaxLength(30);
+        // PublisherProfileService/AuthorProfile sorgularının GROUP BY Publisher/AuthorName'i bu indekslere dayanır.
+        b.HasIndex(e => e.Publisher);
+        b.HasIndex(e => e.AuthorName);
         b.Property(e => e.StorageUri).HasMaxLength(1000);
 
         b.HasMany(e => e.Pages)

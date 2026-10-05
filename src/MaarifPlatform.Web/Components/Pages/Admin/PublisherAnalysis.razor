@@ -1,0 +1,119 @@
+@page "/admin/publisher-analysis"
+@rendermode InteractiveServer
+@inject MaarifPlatform.Web.Security.OperationGuard Guard
+@attribute [Authorize(Roles = "Admin")]
+@using MaarifPlatform.Domain.Enums
+@using MaarifPlatform.Infrastructure.Intelligence
+@using Microsoft.EntityFrameworkCore
+@inject IServiceScopeFactory ScopeFactory
+
+<PageTitle>Yayınevi Analizi</PageTitle>
+<h1 class="page-title">Yayınevi Analizi</h1>
+<p class="page-intro">
+    Bir yayınevinin/yazarın METNİNİ taklit etmek için değil, ölçülebilir pedagojik/yapısal
+    karakteristiklerini özetlemek için (§39/§53). Hiçbir soru bu rapordan dolayı
+    elenmez/gizlenmez — Geleneksel sorular da (temel işlem becerisi, kavram bilgisi, geleneksel
+    sınav hazırlığı için) değerlidir, bu yüzden havuz dağılımı yalnızca bilgi amaçlıdır.
+</p>
+
+<div class="field" style="max-width:300px">
+    <label>Görünüm</label>
+    <InputSelect Value="_view" ValueChanged="@(async (string v) => await OnViewChanged(v))" ValueExpression="() => _view">
+        <option value="publisher">Yayınevine Göre</option>
+        <option value="author">Yazara Göre (varsa)</option>
+    </InputSelect>
+</div>
+
+@if (_profiles is null)
+{
+    <p>Yükleniyor...</p>
+}
+else if (_profiles.Count == 0)
+{
+    <p class="page-intro">Henüz @(_view == "publisher" ? "yayınevi" : "yazar") bilgisi girilmiş kitap yok.</p>
+}
+else
+{
+    @foreach (var p in _profiles)
+    {
+        <section class="card">
+            <h2>@p.Publisher</h2>
+            <dl>
+                <dt>Kitap sayısı</dt><dd>@p.BookCount</dd>
+                <dt>Toplam soru</dt><dd>@p.QuestionCount</dd>
+                <dt>Analiz edilmiş soru</dt><dd>@p.AnalyzedQuestionCount</dd>
+            </dl>
+
+            @if (p.AnalyzedQuestionCount == 0)
+            {
+                <p class="page-intro">Bu @(_view == "publisher" ? "yayınevinin" : "yazarın") henüz analiz edilmiş (Analyze çalıştırılmış) sorusu yok — aşağıdaki istatistikler için önce ilgili kitapların sorularını analiz edin.</p>
+            }
+            else
+            {
+                <table>
+                    <tbody>
+                        <tr><td>Ortalama soru kökü uzunluğu</td><td>@(p.AvgStemLength?.ToString("F0") ?? "-") karakter</td></tr>
+                        <tr><td>Görsel soru oranı</td><td>@FormatPercent(p.VisualQuestionRate)</td></tr>
+                        <tr><td>Gerçek yaşam bağlamı oranı</td><td>@FormatPercent(p.RealWorldContextRate)</td></tr>
+                        <tr><td>Çoktan seçmeli oranı</td><td>@FormatPercent(p.MultipleChoiceRate)</td></tr>
+                        <tr><td>Ortalama Maarif Uyum Puanı</td><td>@(p.AvgMaarifAlignmentScore?.ToString("F0") ?? "-") / 100</td></tr>
+                    </tbody>
+                </table>
+
+                <h3>Havuz Dağılımı</h3>
+                <ul>
+                    @foreach (var pool in Enum.GetValues<QuestionPoolClassification>())
+                    {
+                        <li>@PoolLabel(pool): @p.PoolDistribution.GetValueOrDefault(pool)</li>
+                    }
+                </ul>
+
+                @if (p.TopArchetypes.Count > 0)
+                {
+                    <h3>En Güçlü Question DNA Kümeleri</h3>
+                    <ul>
+                        @foreach (var a in p.TopArchetypes)
+                        {
+                            <li>@a.Name — @a.Count soru</li>
+                        }
+                    </ul>
+                }
+            }
+        </section>
+    }
+}
+
+@code {
+    private string _view = "publisher";
+    private IReadOnlyList<PublisherProfile>? _profiles;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task OnViewChanged(string value)
+    {
+        _view = value;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        await Guard.RequireAsync("AdminOnly");
+        _profiles = null;
+        await using var scope = ScopeFactory.CreateAsyncScope();
+        var service = scope.ServiceProvider.GetRequiredService<PublisherProfileService>();
+
+        _profiles = _view == "publisher"
+            ? await service.GetPublisherProfilesAsync()
+            : await service.GetAuthorProfilesAsync();
+    }
+
+    private static string FormatPercent(double? value) => value is null ? "-" : $"%{value.Value * 100:F0}";
+
+    private static string PoolLabel(QuestionPoolClassification pool) => pool switch
+    {
+        QuestionPoolClassification.MaarifAligned => "Maarif Modeli Uyumlu",
+        QuestionPoolClassification.Hybrid => "Hibrit/Geçiş",
+        QuestionPoolClassification.Traditional => "Geleneksel",
+        _ => pool.ToString()
+    };
+}

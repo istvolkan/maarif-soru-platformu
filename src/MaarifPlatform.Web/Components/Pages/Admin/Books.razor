@@ -62,6 +62,10 @@
                 <InputText @bind-Value="_form.PublisherOther" placeholder="Yeni yayınevi adı" />
             }
         </div>
+        <div class="field">
+            <label>Yazar (opsiyonel)</label>
+            <InputText @bind-Value="_form.AuthorName" placeholder="Belirtmek istemiyorsanız boş bırakın" />
+        </div>
         <div class="field"><label>PDF Dosyası</label><InputFile OnChange="OnFileSelected" accept=".pdf" /></div>
         <button type="submit" disabled="@(_selectedFile is null || _uploading)">@(_uploading ? "Yükleniyor..." : "Yükle")</button>
     </EditForm>
@@ -179,7 +183,11 @@ else
             var storage = scope.ServiceProvider.GetRequiredService<IBookFileStorage>();
 
             var publisher = _form.PublisherSelection == OtherPublisherValue ? _form.PublisherOther : _form.PublisherSelection;
-            var book = new Book { Title = _form.Title, Grade = _form.Grade, Subject = _form.Subject, Publisher = publisher };
+            var book = new Book
+            {
+                Title = _form.Title, Grade = _form.Grade, Subject = _form.Subject, Publisher = publisher,
+                AuthorName = string.IsNullOrWhiteSpace(_form.AuthorName) ? null : _form.AuthorName.Trim()
+            };
 
             await using (var stream = _selectedFile.OpenReadStream(maxAllowedSize: 200 * 1024 * 1024))
             {
@@ -272,6 +280,7 @@ else
         public string Subject { get; set; } = string.Empty;
         public string PublisherSelection { get; set; } = "MEB";
         public string? PublisherOther { get; set; }
+        public string? AuthorName { get; set; }
     }
 
     private sealed record BookRow(Guid Id, string Title, int? Grade, string Subject, string SourceType, int? TotalPages, int QuestionCount);

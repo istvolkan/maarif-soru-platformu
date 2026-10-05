@@ -9,6 +9,10 @@ public class Book : Entity
     public int? Grade { get; set; }
     public string Subject { get; set; } = string.Empty;
     public string? Publisher { get; set; }
+    // §40 Question Intelligence Engine Faz 5 — opsiyonel, ham METİN taklidi İÇİN DEĞİL (bkz.
+    // PublisherProfileService doc'u: yaşayan/çağdaş bir yazarın yazım üslubu asla taklit edilmez,
+    // yalnızca soyut yapısal özellikler istatistiksel olarak özetlenir).
+    public string? AuthorName { get; set; }
     public SourceType SourceType { get; set; } = SourceType.LegacyBook;
     public int? TotalPages { get; set; }
     public string StorageUri { get; set; } = string.Empty;
