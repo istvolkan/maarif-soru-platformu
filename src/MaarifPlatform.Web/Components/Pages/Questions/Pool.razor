@@ -35,14 +35,29 @@ else if (_questions.Count == 0)
 }
 else
 {
-    <div class="actions pool-toolbar">
-        <button disabled="@_busy" @onclick="ApproveAllAsync">Tümünü Onayla</button>
+    <div class="pool-toolbar">
+        <div class="actions">
+            <button disabled="@_busy" @onclick="() => ApproveAllAsync(onlyMaarifAligned: true)">Yalnızca Maarif Uyumlu Olanları Onayla</button>
+            <button disabled="@_busy" class="secondary" @onclick="() => ApproveAllAsync(onlyMaarifAligned: false)">Tümünü Onayla</button>
+        </div>
+        <p class="page-intro pool-toolbar-note">
+            "Tümünü Onayla" Maarif Modeli uyumu düşük soruları da (@_questions.Count(q => q.PoolClassification != QuestionPoolClassification.MaarifAligned) adet) onaylar —
+            bunlar atılmaz, yalnızca uyum puanı daha düşüktür.
+        </p>
     </div>
 
     @foreach (var q in _questions)
     {
         <div class="card pool-card">
-            <div class="pool-question">@q.QuestionText</div>
+            <div class="pool-question">
+                @q.QuestionText
+                @if (q.MaarifAlignmentScore is int score)
+                {
+                    <span class="pool-alignment-badge @AlignmentBadgeClass(q.PoolClassification)">
+                        @AlignmentBadgeLabel(q.PoolClassification) (@score/100)
+                    </span>
+                }
+            </div>
 
             @if (q.HasVisual)
             {
@@ -83,11 +98,26 @@ else
                 </div>
             }
 
+            @if (_confirmingLowAlignment.Contains(q.Id))
+            {
+                <p class="warning pool-alignment-warning">
+                    Bu sorunun Maarif Modeli uyum puanı düşük (@q.MaarifAlignmentScore/100) — yine de onaylamak istediğinize emin misiniz?
+                </p>
+            }
+
             <div class="actions">
                 <button class="secondary" @onclick="() => ToggleSolution(q.Id)">
                     @(_expanded.Contains(q.Id) ? "Çözümü Gizle" : "Çözümü Gör")
                 </button>
-                <button disabled="@_busy" @onclick="() => ApproveAsync(q.Id)">Onayla</button>
+                @if (_confirmingLowAlignment.Contains(q.Id))
+                {
+                    <button disabled="@_busy" @onclick="() => ApproveAsync(q.Id, confirmedLowAlignment: true)">Yine de Onayla</button>
+                    <button disabled="@_busy" class="secondary" @onclick="() => _confirmingLowAlignment.Remove(q.Id)">Vazgeç</button>
+                }
+                else
+                {
+                    <button disabled="@_busy" @onclick="() => ApproveAsync(q.Id)">Onayla</button>
+                }
                 <button disabled="@_busy" class="secondary" @onclick="() => RejectAsync(q.Id)">Reddet</button>
                 <a class="btn btn-secondary" href="@($"questions/{q.Id}")">Detay</a>
             </div>
@@ -105,11 +135,18 @@ else
     .pool-options li.correct { font-weight: 700; color: var(--z-success); }
     .pool-meta { font-size: 0.85rem; color: var(--z-muted); margin-bottom: 0.75rem; }
     .pool-solution { background: var(--z-bg, #f7f7f7); border-radius: var(--z-radius); padding: 0.75rem 1rem; margin-bottom: 0.75rem; font-size: 0.92rem; }
+    .pool-toolbar-note { font-size: 0.82rem; margin: 0.4rem 0 0 0; }
+    .pool-alignment-badge { display: inline-block; margin-left: 0.6rem; padding: 0.15rem 0.5rem; border-radius: 999px; font-size: 0.72rem; font-weight: 700; vertical-align: middle; }
+    .pool-alignment-badge-high { background: #e6f4ea; color: #1e7a34; }
+    .pool-alignment-badge-mid { background: #fff4e0; color: #8a5a00; }
+    .pool-alignment-badge-low { background: #fde8e8; color: #b42318; }
+    .pool-alignment-warning { color: #b42318; font-weight: 600; }
 </style>
 
 @code {
     private List<PoolQuestionRow>? _questions;
     private readonly HashSet<Guid> _expanded = new();
+    private readonly HashSet<Guid> _confirmingLowAlignment = new();
     private bool _busy;
     private string? _error;
     private string? _message;
@@ -164,7 +201,7 @@ else
                 options.Select(o => (o.Label, o.Text)).ToList(), correctLabel,
                 row.Dna.Solution, row.Dna.Grade ?? 0, row.Dna.Subject ?? "-",
                 row.Dna.LearningOutcomeCode, row.Dna.FieldSkill, row.Dna.Difficulty?.ToString(),
-                distractors, row.Dna.RequiresVisual));
+                distractors, row.Dna.RequiresVisual, row.Dna.MaarifAlignmentScore, row.Dna.PoolClassification));
         }
     }
 
@@ -176,9 +213,45 @@ else
         }
     }
 
-    private async Task ApproveAsync(Guid questionId) => await SetStatusAsync(questionId, QuestionStatus.EditorApproved);
+    // 2026-10 kullanıcı kararı: Maarif Modeli uyumu düşük bir soru onaylanmak istendiğinde
+    // sessizce onaylanmaz — önce bir uyarı gösterilir, yönetici "Yine de Onayla"ya BİLEREK
+    // tekrar basmalıdır. Hiçbir soru bu yüzden engellenmiyor, yalnızca bilinçli bir ikinci adım.
+    private async Task ApproveAsync(Guid questionId, bool confirmedLowAlignment = false)
+    {
+        var question = _questions!.First(q => q.Id == questionId);
+        var isLowAlignment = question.PoolClassification is not null && question.PoolClassification != QuestionPoolClassification.MaarifAligned;
 
-    private async Task RejectAsync(Guid questionId) => await SetStatusAsync(questionId, QuestionStatus.Rejected);
+        if (isLowAlignment && !confirmedLowAlignment)
+        {
+            _confirmingLowAlignment.Add(questionId);
+            return;
+        }
+
+        _confirmingLowAlignment.Remove(questionId);
+        await SetStatusAsync(questionId, QuestionStatus.EditorApproved);
+    }
+
+    private async Task RejectAsync(Guid questionId)
+    {
+        _confirmingLowAlignment.Remove(questionId);
+        await SetStatusAsync(questionId, QuestionStatus.Rejected);
+    }
+
+    private static string AlignmentBadgeClass(QuestionPoolClassification? classification) => classification switch
+    {
+        QuestionPoolClassification.MaarifAligned => "pool-alignment-badge-high",
+        QuestionPoolClassification.Hybrid => "pool-alignment-badge-mid",
+        QuestionPoolClassification.Traditional => "pool-alignment-badge-low",
+        _ => ""
+    };
+
+    private static string AlignmentBadgeLabel(QuestionPoolClassification? classification) => classification switch
+    {
+        QuestionPoolClassification.MaarifAligned => "Maarif Uyumlu",
+        QuestionPoolClassification.Hybrid => "Kısmi Uyum",
+        QuestionPoolClassification.Traditional => "Düşük Uyum",
+        _ => "-"
+    };
 
     private async Task SetStatusAsync(Guid questionId, QuestionStatus status)
     {
@@ -209,7 +282,7 @@ else
         await LoadAsync();
     }
 
-    private async Task ApproveAllAsync()
+    private async Task ApproveAllAsync(bool onlyMaarifAligned)
     {
         await Guard.RequireAsync("QuestionEdit");
         _busy = true;
@@ -220,7 +293,11 @@ else
 
         try
         {
-            var ids = _questions!.Select(q => q.Id).ToList();
+            var ids = (onlyMaarifAligned
+                    ? _questions!.Where(q => q.PoolClassification == QuestionPoolClassification.MaarifAligned)
+                    : _questions!)
+                .Select(q => q.Id)
+                .ToList();
             var questions = await db.Questions.Where(q => ids.Contains(q.Id)).ToListAsync();
             foreach (var question in questions)
             {
@@ -228,7 +305,9 @@ else
                 question.UpdatedAt = DateTimeOffset.UtcNow;
             }
             await db.SaveChangesAsync();
-            _message = $"{questions.Count} soru onaylandı.";
+            _message = questions.Count == 0
+                ? "Onaylanacak soru bulunamadı."
+                : $"{questions.Count} soru onaylandı.";
         }
         catch (Exception ex)
         {
@@ -247,5 +326,6 @@ else
     private sealed record PoolQuestionRow(
         Guid Id, string QuestionText, List<(string Label, string Text)> Options, string? CorrectLabel,
         string? Solution, int Grade, string Subject, string? LearningOutcomeCode, string? Skill,
-        string? Difficulty, List<DistractorRow> Distractors, bool HasVisual);
+        string? Difficulty, List<DistractorRow> Distractors, bool HasVisual,
+        int? MaarifAlignmentScore, QuestionPoolClassification? PoolClassification);
 }

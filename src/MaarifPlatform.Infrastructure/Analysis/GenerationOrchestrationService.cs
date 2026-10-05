@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using MaarifPlatform.Application.Extraction;
 using MaarifPlatform.Application.Generation;
+using MaarifPlatform.Application.Intelligence;
 using MaarifPlatform.Application.Providers;
 using MaarifPlatform.Application.Storage;
 using MaarifPlatform.Application.Visuals;
@@ -227,6 +228,14 @@ public class GenerationOrchestrationService(
             var attemptMessages = new List<string>();
             GenerateQuestionResult? accepted = null;
             string? acceptedSvg = null;
+            // §41/§48 (Question Intelligence Engine Faz 4/7) — Soru Üret akışı hiç Analysis'ten
+            // geçmediği için (bkz. PersistGeneratedQuestionAsync doc'u) gerçek RubricEngine
+            // ağırlıklandırmalı bir MaarifAlignmentScore YOKTUR; bu PROXY, zaten GEÇMİŞ (kabul
+            // edilmiş) Curriculum Validator + Judge skorlarının ortalamasıdır — ek bir LLM çağrısı
+            // GEREKTİRMEZ. Tam RubricEngine kadar hassas değildir ama Soru Havuzu'nda öğretmene
+            // "bu soru ne kadar Maarif Modeli uyumlu görünüyor" diye kaba bir sinyal vermek için
+            // yeterlidir (bkz. QuestionPoolClassifier, 2026-10 kullanıcı kararı).
+            int acceptedMaarifAlignmentScoreProxy = 0;
 
             // §16 zorluk bazlı yönlendirme: bu slotun DifficultyLevel'ine göre Generator/
             // CurriculumValidator/Judge'ın ÜÇÜ de AYRI bir (sağlayıcı, model) çiftine
@@ -459,6 +468,8 @@ public class GenerationOrchestrationService(
 
                 accepted = generated;
                 acceptedSvg = renderedSvg;
+                acceptedMaarifAlignmentScoreProxy = (int)Math.Round(
+                    (alignment.LearningOutcomeAlignmentScore + alignment.SkillAlignmentScore + evalResult.QualityScore) / 3.0);
             }
 
             if (accepted is null)
@@ -474,7 +485,8 @@ public class GenerationOrchestrationService(
                 continue;
             }
 
-            var (question, version) = await PersistGeneratedQuestionAsync(request, item, accepted, acceptedSvg, llmProvider.Name, ct);
+            var (question, version) = await PersistGeneratedQuestionAsync(
+                request, item, accepted, acceptedSvg, llmProvider.Name, acceptedMaarifAlignmentScoreProxy, ct);
             await similarityService.RecordAsync(
                 version.Id, request.Grade, request.Subject, accepted.Question, QuestionEmbeddingSourceKind.Generated, ct);
 
@@ -493,7 +505,7 @@ public class GenerationOrchestrationService(
 
     private async Task<(Question Question, QuestionVersion Version)> PersistGeneratedQuestionAsync(
         GenerateBatchRequest request, GenerationBlueprintItem item, GenerateQuestionResult result,
-        string? renderedSvg, string providerName, CancellationToken ct)
+        string? renderedSvg, string providerName, int maarifAlignmentScoreProxy, CancellationToken ct)
     {
         var book = await FindOrCreatePlaceholderBookAsync(request.Grade, request.Subject, ct);
 
@@ -544,6 +556,9 @@ public class GenerationOrchestrationService(
             Solution = result.Solution,
             CorrectAnswer = result.CorrectAnswer,
             DnaSchemaVersion = "1.0",
+            // §41/§48 Faz 4/7 — bkz. GenerateBatchAsync'teki acceptedMaarifAlignmentScoreProxy doc'u.
+            MaarifAlignmentScore = maarifAlignmentScoreProxy,
+            PoolClassification = QuestionPoolClassifier.Classify(maarifAlignmentScoreProxy),
             RequiresVisual = renderedSvg is not null,
             VisualType = renderedSvg is not null ? result.VisualSpec?.Type : null
         };

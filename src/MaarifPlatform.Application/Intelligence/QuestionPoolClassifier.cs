@@ -7,12 +7,16 @@ namespace MaarifPlatform.Application.Intelligence;
 /// zaten deterministik olarak hesaplanmış MaarifAlignmentScore'dan (RubricEngine) kodda türetilir.</summary>
 public static class QuestionPoolClassifier
 {
-    /// <summary>§41'in 5 bandını (0-29 Geleneksel, 30-49 Düşük, 50-69 Kısmi, 70-84 Yüksek,
-    /// 85-100 Güçlü) §48'in 3 havuzuna daraltır: Yüksek+Güçlü → MaarifAligned (Pool A),
-    /// Kısmi → Hybrid (Pool C), Geleneksel+Düşük → Traditional (Pool B).</summary>
+    /// <summary>2026-10 kullanıcı kararı: "Maarif Uyumlu" eşiği AÇIKÇA 75 olarak belirlendi
+    /// (§41'in orijinal 70 eşiğinin YERİNE geçer — Soru Havuzu'nda sorular bu eşiğe göre
+    /// görsel olarak işaretlenip, öğretmen "yalnızca Maarif Uyumlu olanları onayla" gibi toplu
+    /// işlemler yapabilsin diye). ≥75 → MaarifAligned (Pool A), 50-74 → Hybrid (Pool C),
+    /// &lt;50 → Traditional (Pool B). Hiçbir bant ATILMAZ — yalnızca bir ETİKETTİR.</summary>
+    public const int MaarifAlignedThreshold = 75;
+
     public static QuestionPoolClassification Classify(int maarifAlignmentScore) => maarifAlignmentScore switch
     {
-        >= 70 => QuestionPoolClassification.MaarifAligned,
+        >= MaarifAlignedThreshold => QuestionPoolClassification.MaarifAligned,
         >= 50 => QuestionPoolClassification.Hybrid,
         _ => QuestionPoolClassification.Traditional
     };
