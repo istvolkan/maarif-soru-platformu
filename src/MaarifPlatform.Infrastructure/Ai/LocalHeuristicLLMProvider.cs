@@ -1,5 +1,6 @@
 using MaarifPlatform.Application.Generation;
 using MaarifPlatform.Application.Providers;
+using MaarifPlatform.Application.Rubric;
 using MaarifPlatform.Application.Visuals;
 
 namespace MaarifPlatform.Infrastructure.Ai;
@@ -32,24 +33,22 @@ public class LocalHeuristicLLMProvider : ILLMProvider
             $"[MOCK] {criterion} — gerçek değerlendirme yapılmadı; yapısal sinyallere " +
             "(grounding varlığı, şık sayısı, gövde uzunluğu) dayanan bir tahmindir.";
 
-        var evaluations = new List<CriterionEvaluation>
+        // 2026-10 (Faz 1): kriter listesi artık MaarifRubric.Criteria'dan GENERIC türetilir —
+        // önceden burada 14 kriterin hepsi tek tek hardcode'lanmıştı; rubrik her güncellendiğinde
+        // (bkz. MaarifRubric.cs'teki 21 kriterlik Faz 1 genişlemesi) bu listeyi elle senkronize
+        // tutmak kırılgandı. mathematical_accuracy/learning_outcome_alignment DIŞINDAKİ her kriter
+        // aynı yapısal sinyal tabanlı Score(...) sezgisiyle puanlanır — mock'un amacı gerçek
+        // pedagojik değerlendirme değil, boruyu (RubricEngine'in "eksik kriter yok" varsaymasını)
+        // anahtar gerektirmeden test edebilmektir.
+        var evaluations = MaarifRubric.Criteria.Select(c => c.Key switch
         {
-            new("mathematical_accuracy", 100, "[MOCK] Doğruluk kontrolü yapılmadı, varsayılan tam puan verildi.", null, false),
-            new("learning_outcome_alignment", Score(40, groundingBonus: 30), Note("learning_outcome_alignment"),
+            "mathematical_accuracy" => new CriterionEvaluation(
+                "mathematical_accuracy", 100, "[MOCK] Doğruluk kontrolü yapılmadı, varsayılan tam puan verildi.", null, false),
+            "learning_outcome_alignment" => new CriterionEvaluation(
+                "learning_outcome_alignment", Score(40, groundingBonus: 30), Note("learning_outcome_alignment"),
                 hasGrounding ? request.Grounding[0].SectionPath : null, false),
-            new("field_skill_alignment", Score(55, groundingBonus: 10), Note("field_skill_alignment"), null, false),
-            new("process_component", Score(50), Note("process_component"), null, false),
-            new("reasoning", Score(50), Note("reasoning"), null, false),
-            new("problem_solving", Score(55, optionsBonus: 10), Note("problem_solving"), null, false),
-            new("modeling", Score(45), Note("modeling"), null, false),
-            new("context_quality", Score(45, groundingBonus: 15), Note("context_quality"), null, false),
-            new("representation_usage", Score(50, optionsBonus: 10), Note("representation_usage"), null, false),
-            new("grade_level_fit", Score(65), Note("grade_level_fit"), null, false),
-            new("language_clarity", Score(60, lengthBonus: 10), Note("language_clarity"), null, false),
-            new("measurability", Score(55, optionsBonus: 15), Note("measurability"), null, false),
-            new("distractor_quality", Score(50, optionsBonus: 15), Note("distractor_quality"), null, false),
-            new("cognitive_load_balance", Score(60), Note("cognitive_load_balance"), null, false)
-        };
+            _ => new CriterionEvaluation(c.Key, Score(50, groundingBonus: 10, optionsBonus: 10, lengthBonus: 5), Note(c.Key), null, false)
+        }).ToList();
 
         // §43/Faz 1 DNA alanları — gerçek sınıflandırma YAPMAZ, yalnızca yapısal sinyallerden
         // (şık sayısı/grounding varlığı) kaba bir tahmin üretir; borunun (Analyze→QuestionDna
