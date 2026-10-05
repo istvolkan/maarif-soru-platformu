@@ -51,6 +51,11 @@ public class LocalHeuristicLLMProvider : ILLMProvider
             new("cognitive_load_balance", Score(60), Note("cognitive_load_balance"), null, false)
         };
 
+        // §43/Faz 1 DNA alanları — gerçek sınıflandırma YAPMAZ, yalnızca yapısal sinyallerden
+        // (şık sayısı/grounding varlığı) kaba bir tahmin üretir; borunun (Analyze→QuestionDna
+        // eşlemesi) anahtar gerektirmeden test edilebilmesi içindir.
+        var mockQuestionType = hasWellFormedOptions ? "Çoktan Seçmeli" : "Açık Uçlu";
+
         var result = new AnalyzeQuestionResult(
             MathematicalCore: Truncate(request.OriginalQuestion, 60),
             LearningOutcomeCode: null,
@@ -62,7 +67,14 @@ public class LocalHeuristicLLMProvider : ILLMProvider
             ManualReviewReason: hasGrounding
                 ? null
                 : "[MOCK] RAG referans kaynağı bulunamadı; kazanım/beceri alanları doğrulanamadı.",
-            Usage: new AiUsage("local-heuristic", "mock-v1", EstimateTokens(request), 220, 0m, 5));
+            Usage: new AiUsage("local-heuristic", "mock-v1", EstimateTokens(request), 220, 0m, 5),
+            QuestionType: mockQuestionType,
+            ContextType: hasGrounding ? "[MOCK] Belirlenemedi" : "Bağlamsız / Saf Matematik",
+            RepresentationTypes: ["Sözel"],
+            CognitiveLevel: "Uygulama",
+            ReasoningTypes: ["[MOCK] gerçek sınıflandırma yapılmadı"],
+            ExpectedSolutionSteps: 1,
+            AiEstimatedStudentTimeMinutes: 3);
 
         return Task.FromResult(result);
     }

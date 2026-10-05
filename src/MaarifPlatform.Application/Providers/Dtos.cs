@@ -26,6 +26,12 @@ public sealed record CriterionEvaluation(
     string? SourceRef,
     bool CriticalGateViolated);
 
+// Faz 1 (Question Intelligence Engine) eklentisi: QuestionDna'da ZATEN var olan ama hiçbir
+// servisin doldurmadığı QuestionType/ContextType/RepresentationTypesJson/CognitiveLevel/
+// ReasoningTypesJson/ExpectedSolutionSteps/AiEstimatedStudentTimeMinutes kolonlarını doldurmak
+// için eklendi (bkz. AnalysisOrchestrationService) — yeni bir DNA şeması İCAT EDİLMEDİ, var olan
+// boş alanlar dolduruldu. Hepsi nullable: eski (bu alanları hiç döndürmeyen) bir sağlayıcı/mock
+// implementasyonu kırılmadan derlenmeye devam eder.
 public sealed record AnalyzeQuestionResult(
     string MathematicalCore,
     string? LearningOutcomeCode,
@@ -35,7 +41,14 @@ public sealed record AnalyzeQuestionResult(
     IReadOnlyList<CriterionEvaluation> CriterionEvaluations,
     bool ManualReviewRequired,
     string? ManualReviewReason,
-    AiUsage Usage);
+    AiUsage Usage,
+    string? QuestionType = null,
+    string? ContextType = null,
+    IReadOnlyList<string>? RepresentationTypes = null,
+    string? CognitiveLevel = null,
+    IReadOnlyList<string>? ReasoningTypes = null,
+    int? ExpectedSolutionSteps = null,
+    int? AiEstimatedStudentTimeMinutes = null);
 
 // §6 Dönüşüm modları — CONSERVATIVE / TRANSFORM / REDESIGN.
 public sealed record TransformQuestionRequest(

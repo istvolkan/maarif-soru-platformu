@@ -161,6 +161,22 @@ public class AnalysisOrchestrationService(
             FieldSkill = result.FieldSkill,
             ConceptualSkill = result.ConceptualSkill,
             ContextQuality = result.ContextIsDecorative ? "decorative" : "functional",
+            // Faz 1 (Question Intelligence Engine) — QuestionDna'da ZATEN var olan ama önceden
+            // hiç doldurulmayan kolonlar (bkz. AnalyzeQuestionResult'taki doc). Yeni bir şema
+            // DEĞİL, var olan boş alanların doldurulması.
+            QuestionType = result.QuestionType,
+            ContextType = result.ContextType,
+            RepresentationTypesJson = result.RepresentationTypes is { Count: > 0 } representationTypes
+                ? JsonSerializer.Serialize(representationTypes)
+                : null,
+            CognitiveLevel = result.CognitiveLevel,
+            ReasoningTypesJson = result.ReasoningTypes is { Count: > 0 } reasoningTypes
+                ? JsonSerializer.Serialize(reasoningTypes)
+                : null,
+            // QuestionDna.ExpectedSolutionSteps string (serbest biçim, ör. "3" veya "2-3") — AI'nin
+            // döndürdüğü tamsayı buna çevrilir.
+            ExpectedSolutionSteps = result.ExpectedSolutionSteps?.ToString(),
+            AiEstimatedStudentTimeMinutes = result.AiEstimatedStudentTimeMinutes,
             MaarifAlignmentScore = rubric.WeightedScore,
             AlignmentIssuesJson = JsonSerializer.Serialize(rubric.Issues),
             TransformationLevel = rubric.Level,

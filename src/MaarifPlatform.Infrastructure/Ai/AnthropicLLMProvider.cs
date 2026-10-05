@@ -659,6 +659,40 @@ public class AnthropicLLMProvider : ILLMProvider
             ["context_is_decorative"] = Schema("boolean", "Bağlam çözüm için gerekli değilse (salt süsleme) true."),
             ["manual_review_required"] = Schema("boolean", "RAG bağlamı yetersizse veya emin değilsen true."),
             ["manual_review_reason"] = Schema("string", "manual_review_required=true ise kısa gerekçe."),
+            // §43/Faz 1 Question DNA alanları — bu sorunun YAPISINI (nasıl düşündürdüğünü) sınıflandırır,
+            // metnini değil. QuestionDna'da zaten var olan ama hiç doldurulmayan kolonlara karşılık gelir.
+            ["question_type"] = Schema("string",
+                "Sorunun biçimi (örn. \"Çoktan Seçmeli\", \"Açık Uçlu\", \"Kısa Cevaplı\", \"Tablo Yorumlama\", " +
+                "\"Grafik Yorumlama\", \"Görsel Yorumlama\", \"Senaryo Temelli\", \"Problem Temelli\", \"Eşleştirme\", " +
+                "\"Doğru/Yanlış + Gerekçe\"). Şıklar verildiyse genelde \"Çoktan Seçmeli\"dir, ama tablo/grafik/görsel " +
+                "içeren şıklı sorularda o türü tercih et."),
+            ["context_type"] = Schema("string",
+                "Sorunun bağlam/senaryo türü (örn. \"Günlük Yaşam\", \"Bilim ve Teknoloji\", \"Ekonomi/Finans\", " +
+                "\"Spor\", \"Veri/İstatistik\", \"Bağlamsız/Saf Matematik\"). Bağlam yoksa \"Bağlamsız/Saf Matematik\"."),
+            ["representation_types"] = JsonSerializer.SerializeToElement(new
+            {
+                type = "array",
+                description = "Sorunun kullandığı temsil biçimleri (örn. \"Grafik\", \"Tablo\", \"Denklem\", " +
+                    "\"Şekil/Diyagram\", \"Sözel\", \"Sayı Doğrusu\"). Birden fazla olabilir.",
+                items = new { type = "string" }
+            }),
+            ["cognitive_level"] = JsonSerializer.SerializeToElement(new
+            {
+                type = "string",
+                description = "Bloom taksonomisine göre gerekli bilişsel düzey.",
+                @enum = new[] { "Hatırlama", "Anlama", "Uygulama", "Analiz", "Değerlendirme", "Yaratma" }
+            }),
+            ["reasoning_types"] = JsonSerializer.SerializeToElement(new
+            {
+                type = "array",
+                description = "Sorunun gerektirdiği muhakeme türleri (örn. \"Örüntü Tanıma\", \"Modelleme\", " +
+                    "\"Karşılaştırma\", \"Genelleme\", \"Hipotez Kurma\", \"Çıkarım\", \"Sınıflandırma\"). Birden fazla olabilir.",
+                items = new { type = "string" }
+            }),
+            ["expected_solution_steps"] = Schema("integer",
+                "Çözüm için gereken ardışık mantıksal/işlemsel adım sayısı (ör. tek işlemse 1)."),
+            ["ai_estimated_student_time_minutes"] = Schema("integer",
+                "Bu sınıf seviyesindeki tipik bir öğrencinin bu soruyu çözmesi için tahmini süre (dakika)."),
             ["criterion_evaluations"] = JsonSerializer.SerializeToElement(new
             {
                 type = "array",
@@ -722,7 +756,11 @@ public class AnthropicLLMProvider : ILLMProvider
                critical_gate_violated=true işaretle. learning_outcome_alignment kriterinde
                kazanım hiçbir kaynakla doğrulanamıyorsa critical_gate_violated=true işaretle.
             4. Emin değilsen manual_review_required=true döndür ve nedenini yaz — tahmin ile doldurma.
-            5. Cevabını YALNIZCA submit_analysis aracını çağırarak ver.
+            5. question_type/context_type/representation_types/cognitive_level/reasoning_types/
+               expected_solution_steps/ai_estimated_student_time_minutes alanları sorunun METNİNİ
+               değil YAPISINI sınıflandırır — "bu soru öğrenciyi nasıl düşündürüyor?" sorusuna cevap
+               ver, metni yeniden ifade etme. Emin değilsen bu alanları boş bırak (tahmin etme).
+            6. Cevabını YALNIZCA submit_analysis aracını çağırarak ver.
 
             RUBRİK KRİTERLERİ (bkz. §E):
             {criteriaList}
@@ -776,6 +814,14 @@ public class AnthropicLLMProvider : ILLMProvider
             }
         }
 
+        static List<string>? GetStringArrayOrNull(IReadOnlyDictionary<string, JsonElement> input, string key) =>
+            input.TryGetValue(key, out var v) && v.ValueKind == JsonValueKind.Array
+                ? v.EnumerateArray().Select(e => e.GetString() ?? "").Where(s => s.Length > 0).ToList()
+                : null;
+
+        int? GetOptionalInt(string key) =>
+            input.TryGetValue(key, out var v) && v.ValueKind == JsonValueKind.Number ? v.GetInt32() : null;
+
         return new AnalyzeQuestionResult(
             MathematicalCore: GetString("mathematical_core") ?? string.Empty,
             LearningOutcomeCode: GetString("learning_outcome_code"),
@@ -785,7 +831,14 @@ public class AnthropicLLMProvider : ILLMProvider
             CriterionEvaluations: evaluations,
             ManualReviewRequired: GetBool("manual_review_required"),
             ManualReviewReason: GetString("manual_review_reason"),
-            Usage: usage);
+            Usage: usage,
+            QuestionType: GetString("question_type"),
+            ContextType: GetString("context_type"),
+            RepresentationTypes: GetStringArrayOrNull(input, "representation_types"),
+            CognitiveLevel: GetString("cognitive_level"),
+            ReasoningTypes: GetStringArrayOrNull(input, "reasoning_types"),
+            ExpectedSolutionSteps: GetOptionalInt("expected_solution_steps"),
+            AiEstimatedStudentTimeMinutes: GetOptionalInt("ai_estimated_student_time_minutes"));
     }
 
     private static Tool BuildTransformationTool()
