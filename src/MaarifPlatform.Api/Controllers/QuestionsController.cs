@@ -80,7 +80,9 @@ public class QuestionsController(
     {
         try
         {
-            await transformationService.ReviewAsync(id, request.Approve, ct);
+            Guid? actorUserId = Guid.TryParse(
+                User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value, out var userId) ? userId : null;
+            await transformationService.ReviewAsync(id, request.Approve, actorUserId, ct);
             return NoContent();
         }
         catch (InvalidOperationException ex)

@@ -73,6 +73,7 @@ public static class DependencyInjection
         services.AddScoped<QuestionSimilarityService>();
         services.AddScoped<ArchetypeClusteringService>();
         services.AddScoped<PublisherProfileService>();
+        services.AddScoped<QuestionFeedbackService>();
 
         // §4/§H/§8/§10 Analysis + Judge Provider Disagreement. Birincil/ikincil sağlayıcı seçimi
         // Sprint 11'den itibaren TAMAMEN çalışma-zamanlı (IOptionsMonitor + ILLMProviderFactory) —

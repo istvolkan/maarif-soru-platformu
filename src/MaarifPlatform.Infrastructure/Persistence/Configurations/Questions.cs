@@ -175,3 +175,21 @@ public class QuestionArchetypeMemberConfiguration : IEntityTypeConfiguration<Que
             .OnDelete(DeleteBehavior.Cascade);
     }
 }
+
+public class QuestionLifecycleEventConfiguration : IEntityTypeConfiguration<QuestionLifecycleEvent>
+{
+    public void Configure(EntityTypeBuilder<QuestionLifecycleEvent> b)
+    {
+        b.ToTable("question_lifecycle_events");
+        b.HasKey(e => e.Id);
+        b.Property(e => e.EventType).HasConversion<string>().HasMaxLength(20);
+        b.Property(e => e.DetailJson).HasColumnType("jsonb");
+        b.HasIndex(e => e.QuestionId);
+        b.HasIndex(e => e.EventType);
+
+        b.HasOne(e => e.Question)
+            .WithMany()
+            .HasForeignKey(e => e.QuestionId)
+            .OnDelete(DeleteBehavior.Cascade);
+    }
+}

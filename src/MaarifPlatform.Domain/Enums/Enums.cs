@@ -68,6 +68,29 @@ public enum QuestionEmbeddingSourceKind
     Extracted
 }
 
+/// <summary>§55/§56 Geri Bildirim Öğrenme (Question Intelligence Engine Faz 7) — bir sorunun
+/// yaşam döngüsünde GERÇEKTEN gerçekleşen öğretmen/sistem eylemleri. DÜRÜSTLÜK NOTU: bu enum'un
+/// TAMAMI §55'in orijinal taksonomisiyle (Approved/Edited/Rejected/Regenerated/UsedInBook/
+/// UsedInExam) birebir eşlenir, AMA bu platformda şu an yalnızca <see cref="Approved"/>,
+/// <see cref="Rejected"/> ve <see cref="UsedInBook"/> GERÇEKTEN üretilir:
+///   - Edited: platformda şu an bir "soru metnini düzenle" özelliği YOK (QuestionVersionStage.Edited
+///     da aynı nedenle hiç kullanılmıyor) — bu değer hiçbir yerden tetiklenmiyor, yalnızca ileride
+///     bir düzenleme özelliği eklenirse hazır bir yer tutucu.
+///   - Regenerated: tekil bir soru için "yeniden üret" eylemi yok (yalnızca toplu üretim sırasındaki
+///     OTOMATİK deneme-tekrarı var, bu bir öğretmen eylemi değil) — bu değer de şu an tetiklenmiyor.
+///   - UsedInExam: platformda "sınav" kavramı hiç yok (yalnızca Book var) — bu değer de tetiklenmiyor.
+/// Var olmayan bir özelliğin sahte verisini üretmektense bu alanları BOŞ bırakmak tercih edildi —
+/// aynı projenin QuestionDna'daki "deklare edilmiş ama doldurulmamış alan" konvansiyonuyla tutarlı.</summary>
+public enum QuestionLifecycleEventType
+{
+    Approved,
+    Rejected,
+    Edited,
+    Regenerated,
+    UsedInBook,
+    UsedInExam
+}
+
 /// <summary>Rubrik puanına göre dönüşüm kararı, bkz. tasarım dokümanı §5/§E.</summary>
 public enum TransformationLevel
 {

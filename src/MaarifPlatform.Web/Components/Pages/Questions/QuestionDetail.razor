@@ -2,6 +2,7 @@
 @rendermode InteractiveServer
 @inject MaarifPlatform.Web.Security.OperationGuard Guard
 @attribute [Authorize(Policy = "QuestionPoolAccess")]
+@using System.Security.Claims
 @using System.Text.Json
 @using MaarifPlatform.Application.Extraction
 @using MaarifPlatform.Domain.Enums
@@ -10,6 +11,7 @@
 @using Microsoft.EntityFrameworkCore
 @inject IServiceScopeFactory ScopeFactory
 @inject ILogger<QuestionDetail> Logger
+@inject AuthenticationStateProvider AuthState
 
 <PageTitle>Soru Detayı</PageTitle>
 
@@ -286,7 +288,10 @@ else
         var service = scope.ServiceProvider.GetRequiredService<TransformationOrchestrationService>();
         try
         {
-            await service.ReviewAsync(Id, approve);
+            var authState = await AuthState.GetAuthenticationStateAsync();
+            Guid? userId = Guid.TryParse(authState.User.FindFirst(ClaimTypes.NameIdentifier)?.Value, out var id) ? id : null;
+
+            await service.ReviewAsync(Id, approve, userId);
             _message = approve ? "Soru onaylandı." : "Soru reddedildi.";
         }
         catch (Exception ex)

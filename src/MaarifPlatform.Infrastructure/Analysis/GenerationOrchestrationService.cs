@@ -12,6 +12,7 @@ using MaarifPlatform.Domain.Enums;
 using MaarifPlatform.Infrastructure.Ai;
 using MaarifPlatform.Infrastructure.Curriculum;
 using MaarifPlatform.Infrastructure.Generation;
+using MaarifPlatform.Infrastructure.Intelligence;
 using MaarifPlatform.Infrastructure.Persistence;
 using MaarifPlatform.Infrastructure.Rag;
 using Microsoft.EntityFrameworkCore;
@@ -66,7 +67,8 @@ public class GenerationOrchestrationService(
     ReferenceSearchService searchService,
     CurriculumQueryService curriculumQuery,
     QuestionSimilarityService similarityService,
-    IBookFileStorage storage)
+    IBookFileStorage storage,
+    QuestionFeedbackService questionFeedback)
 {
     public async Task<GenerationSummary> GenerateAsync(GenerateQuestionRequest request, CancellationToken ct = default)
     {
@@ -185,10 +187,17 @@ public class GenerationOrchestrationService(
         // GenerationBlueprintBuilder bunu geriye dönük uyumlu şekilde "hint yok" olarak işler.
         var archetypeHints = await db.QuestionArchetypes
             .Where(a => a.Subject == request.Subject && a.GradeRangeMin <= request.Grade && a.GradeRangeMax >= request.Grade)
-            .Select(a => new { a.Name, a.MaarifAffinity, a.SourceSupportCount })
+            .Select(a => new { a.Id, a.Name, a.MaarifAffinity, a.SourceSupportCount })
             .ToListAsync(ct);
+        // §56/§57 Faz 7 — bkz. QuestionFeedbackService.GetArchetypeApprovalRatesAsync doc'u:
+        // yalnızca Analiz edilmiş (kitaptan çıkarılmış) sorulardan kümelenen archetype'lar için
+        // anlamlı veri döner; Soru Üret akışının archetype'ları (şu an hiçbiri — bkz. Faz 3 kapsam
+        // notu) ve yetersiz örnekli archetype'lar için null döner, bu durumda PatternScorer NÖTR
+        // (çarpan 1.0) davranır.
+        var approvalRates = await questionFeedback.GetArchetypeApprovalRatesAsync(
+            archetypeHints.Select(a => a.Id).ToList(), ct);
         var rankedArchetypeHints = archetypeHints
-            .OrderByDescending(a => PatternScorer.Score(a.MaarifAffinity, generationRouting.MaarifWeight))
+            .OrderByDescending(a => PatternScorer.Score(a.MaarifAffinity, generationRouting.MaarifWeight, approvalRates.GetValueOrDefault(a.Id)))
             .ThenByDescending(a => a.SourceSupportCount)
             .Select(a => a.Name)
             .Take(Math.Min(5, request.Count))

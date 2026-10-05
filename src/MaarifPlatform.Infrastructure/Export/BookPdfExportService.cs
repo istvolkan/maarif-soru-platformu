@@ -3,6 +3,7 @@ using MaarifPlatform.Application.Extraction;
 using MaarifPlatform.Application.Storage;
 using MaarifPlatform.Domain.Entities;
 using MaarifPlatform.Domain.Enums;
+using MaarifPlatform.Infrastructure.Intelligence;
 using MaarifPlatform.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using QuestPDF.Fluent;
@@ -23,7 +24,7 @@ public sealed record RevisionReportItem(
 /// üretir — İncelemeye Gönderilmiş (ManualReviewRequired) veya henüz dönüştürülmemiş sorular
 /// dahil edilmez (bkz. BookBatchTransformService). Üç bölüm: sorular (varsa görselleriyle),
 /// cevap anahtarı, çözümler — tipik Türk soru bankası formatı.</summary>
-public class BookPdfExportService(MaarifDbContext db, IBookFileStorage storage)
+public class BookPdfExportService(MaarifDbContext db, IBookFileStorage storage, QuestionFeedbackService questionFeedback)
 {
     private static readonly string[] Labels = ["A", "B", "C", "D", "E", "F"];
 
@@ -185,7 +186,23 @@ public class BookPdfExportService(MaarifDbContext db, IBookFileStorage storage)
             });
         });
 
-        return document.GeneratePdf();
+        var pdfBytes = document.GeneratePdf();
+
+        // §55 Faz 7 — "Used in Book" §55'te özellikle GÜÇLÜ bir kalite sinyali olarak belirtilir
+        // (bir soru fiilen bir kitaba/PDF'e dahil edilmiş). PDF GERÇEKTEN üretildikten SONRA
+        // kaydedilir (yukarıda bir exception atılırsa hiç loglanmaz) — her export çağrısında
+        // tekrar loglanır (aynı kitap birden fazla kez export edilirse sinyal GÜÇLENİR, bilinçli).
+        if (approvedQuestionIds.Count > 0)
+        {
+            var detailJson = JsonSerializer.Serialize(new { bookId });
+            foreach (var questionId in approvedQuestionIds)
+            {
+                questionFeedback.Log(questionId, QuestionLifecycleEventType.UsedInBook, detailJson: detailJson);
+            }
+            await db.SaveChangesAsync(ct);
+        }
+
+        return pdfBytes;
     }
 
     // Vektör boyutu yok (viewport/CullRect yoksa SVG bozuk demektir) — 2x ölçekte rasterize

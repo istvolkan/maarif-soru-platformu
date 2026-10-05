@@ -25,6 +25,9 @@ public class MaarifDbContext(DbContextOptions<MaarifDbContext> options) : DbCont
     public DbSet<QuestionArchetype> QuestionArchetypes => Set<QuestionArchetype>();
     public DbSet<QuestionArchetypeMember> QuestionArchetypeMembers => Set<QuestionArchetypeMember>();
 
+    // Question Intelligence Engine Faz 7 — §55/§56 Geri Bildirim Öğrenme.
+    public DbSet<QuestionLifecycleEvent> QuestionLifecycleEvents => Set<QuestionLifecycleEvent>();
+
     // Soru Çeşitlendir — curriculum-validated Soru Havuzu'ndan bilinçli olarak AYRI (bkz.
     // QuestionVariationBatch'in kendi doc yorumu).
     public DbSet<QuestionVariationBatch> QuestionVariationBatches => Set<QuestionVariationBatch>();

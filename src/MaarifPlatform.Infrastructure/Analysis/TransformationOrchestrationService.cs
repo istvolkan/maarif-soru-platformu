@@ -4,6 +4,7 @@ using MaarifPlatform.Application.Rubric;
 using MaarifPlatform.Domain.Entities;
 using MaarifPlatform.Domain.Enums;
 using MaarifPlatform.Infrastructure.Ai;
+using MaarifPlatform.Infrastructure.Intelligence;
 using MaarifPlatform.Infrastructure.Persistence;
 using MaarifPlatform.Infrastructure.Rag;
 using Microsoft.EntityFrameworkCore;
@@ -36,7 +37,8 @@ public class TransformationOrchestrationService(
     ReferenceSearchService searchService,
     ILLMProviderFactory providerFactory,
     IOptionsMonitor<AiRoutingOptions> aiRouting,
-    IOptionsMonitor<JudgeRoutingOptions> judgeRoutingOptions)
+    IOptionsMonitor<JudgeRoutingOptions> judgeRoutingOptions,
+    QuestionFeedbackService questionFeedback)
 {
     public async Task<TransformationSummary> TransformAsync(Guid questionId, CancellationToken ct = default)
     {
@@ -275,7 +277,7 @@ public class TransformationOrchestrationService(
 
     /// <summary>ManualReviewRequired'a düşen bir soru için editörün elle verdiği karar —
     /// Judge'ın otomatik AiApproved/ManualReviewRequired ayrımının insan tarafından tamamlanması.</summary>
-    public async Task ReviewAsync(Guid questionId, bool approve, CancellationToken ct = default)
+    public async Task ReviewAsync(Guid questionId, bool approve, Guid? actorUserId = null, CancellationToken ct = default)
     {
         var question = await db.Questions.FirstOrDefaultAsync(q => q.Id == questionId, ct)
             ?? throw new InvalidOperationException($"Soru bulunamadı: {questionId}");
@@ -288,6 +290,10 @@ public class TransformationOrchestrationService(
 
         question.Status = approve ? QuestionStatus.EditorApproved : QuestionStatus.Rejected;
         question.UpdatedAt = DateTimeOffset.UtcNow;
+
+        // §55 Faz 7 — bkz. QuestionLifecycleEventType doc'u.
+        questionFeedback.Log(
+            questionId, approve ? QuestionLifecycleEventType.Approved : QuestionLifecycleEventType.Rejected, actorUserId);
 
         await db.SaveChangesAsync(ct);
     }

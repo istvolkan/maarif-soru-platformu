@@ -2,13 +2,16 @@
 @rendermode InteractiveServer
 @inject MaarifPlatform.Web.Security.OperationGuard Guard
 @attribute [Authorize(Policy = "QuestionPoolAccess")]
+@using System.Security.Claims
 @using System.Text.Json
 @using MaarifPlatform.Application.Intelligence
 @using MaarifPlatform.Domain.Entities
 @using MaarifPlatform.Domain.Enums
+@using MaarifPlatform.Infrastructure.Intelligence
 @using MaarifPlatform.Infrastructure.Persistence
 @using Microsoft.EntityFrameworkCore
 @inject IServiceScopeFactory ScopeFactory
+@inject AuthenticationStateProvider AuthState
 
 <PageTitle>Soru Havuzu</PageTitle>
 <h1 class="page-title">Soru Havuzu</h1>
@@ -268,6 +271,12 @@ else
         return book.Id;
     }
 
+    private async Task<Guid?> GetCurrentUserIdAsync()
+    {
+        var authState = await AuthState.GetAuthenticationStateAsync();
+        return Guid.TryParse(authState.User.FindFirst(ClaimTypes.NameIdentifier)?.Value, out var id) ? id : null;
+    }
+
     private static bool IsMaarifAligned(QuestionPoolClassification? classification) =>
         classification == QuestionPoolClassification.MaarifAligned;
 
@@ -304,6 +313,13 @@ else
             {
                 question.BookId = await GetOrCreateMaarifAlignedBookIdAsync(db, row.Grade, row.Subject);
             }
+
+            // §55 Faz 7 — bkz. QuestionLifecycleEventType doc'u.
+            var feedback = scope.ServiceProvider.GetRequiredService<QuestionFeedbackService>();
+            var actorUserId = await GetCurrentUserIdAsync();
+            feedback.Log(
+                questionId, status == QuestionStatus.EditorApproved ? QuestionLifecycleEventType.Approved : QuestionLifecycleEventType.Rejected,
+                actorUserId);
 
             await db.SaveChangesAsync();
             _message = status == QuestionStatus.EditorApproved ? "Soru onaylandı." : "Soru reddedildi.";
@@ -342,6 +358,8 @@ else
             // sorguya YANSIMAZ) kitap id'si BİR KEZ çözülüp burada önbelleğe alınır, aksi halde
             // aynı sınıf/ders için birden fazla yinelenen "Maarif Uyumlu" kitabı oluşurdu.
             var maarifBookIdCache = new Dictionary<(int Grade, string Subject), Guid>();
+            var feedback = scope.ServiceProvider.GetRequiredService<QuestionFeedbackService>();
+            var actorUserId = await GetCurrentUserIdAsync();
             foreach (var question in questions)
             {
                 question.Status = QuestionStatus.EditorApproved;
@@ -358,6 +376,9 @@ else
                     }
                     question.BookId = bookId;
                 }
+
+                // §55 Faz 7 — bkz. QuestionLifecycleEventType doc'u.
+                feedback.Log(question.Id, QuestionLifecycleEventType.Approved, actorUserId);
             }
             await db.SaveChangesAsync();
             _message = questions.Count == 0
