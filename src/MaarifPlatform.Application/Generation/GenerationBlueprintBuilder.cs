@@ -5,7 +5,9 @@ namespace MaarifPlatform.Application.Generation;
 public sealed record GenerationBlueprintItem(
     DifficultyLevel Difficulty,
     string QuestionType,
-    string? ContentFramework);
+    string? ContentFramework,
+    // §58 Faz 6 — bkz. GenerationBlueprintBuilder.Build'in archetypeHints parametresi.
+    string? ArchetypeHint = null);
 
 /// <summary>§14/§34 Soru Planı — N sorunun zorluk/soru tipi/içerik çerçevesi dağılımını, hiçbir
 /// LLM çağrısı yapmadan, saf deterministik olarak hesaplar (RubricEngine/TransformationModeMapper
@@ -24,11 +26,19 @@ public static class GenerationBlueprintBuilder
         (DifficultyLevel.Hard, 0.30)
     ];
 
+    /// <summary><paramref name="archetypeHints"/> §58 Faz 6 — Pattern Library'den (Faz 3) seçilmiş,
+    /// zaten kaliteye/Maarif uyumuna göre sıralanmış (bkz. GenerationOrchestrationService'teki
+    /// PatternScorer kullanımı) archetype özetleri. Bu metod SIRALAMAYA karışmaz, yalnızca
+    /// ContentFramework'lerle AYNI round-robin desenle slotlara dağıtır — "aynı pattern'ın
+    /// gereksiz tekrarını engelle" (§58) ilkesi böyle sağlanır. Boşsa (Faz 3 verisi henüz
+    /// yoksa/Grade+Subject için hiç archetype bulunamadıysa) tüm slotlar hint'siz kalır — geriye
+    /// dönük UYUMLU, mevcut hiçbir çağrı kırılmaz.</summary>
     public static IReadOnlyList<GenerationBlueprintItem> Build(
         int count,
         string difficultySelection,
         IReadOnlyList<string> questionTypes,
-        IReadOnlyList<string> contentFrameworks)
+        IReadOnlyList<string> contentFrameworks,
+        IReadOnlyList<string>? archetypeHints = null)
     {
         if (count < 1)
         {
@@ -45,11 +55,14 @@ public static class GenerationBlueprintBuilder
         var frameworks = contentFrameworks.Count == 0
             ? Enumerable.Repeat<string?>(null, count).ToList()
             : ResolveByRoundRobin(count, contentFrameworks).Cast<string?>().ToList();
+        var hints = archetypeHints is null or { Count: 0 }
+            ? Enumerable.Repeat<string?>(null, count).ToList()
+            : ResolveByRoundRobin(count, archetypeHints).Cast<string?>().ToList();
 
         var items = new List<GenerationBlueprintItem>(count);
         for (var i = 0; i < count; i++)
         {
-            items.Add(new GenerationBlueprintItem(difficulties[i], types[i], frameworks[i]));
+            items.Add(new GenerationBlueprintItem(difficulties[i], types[i], frameworks[i], hints[i]));
         }
 
         return items;

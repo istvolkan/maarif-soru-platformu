@@ -111,4 +111,26 @@ public class GenerationBlueprintBuilderTests
         Assert.Throws<ArgumentException>(() => GenerationBlueprintBuilder.Build(
             3, nameof(DifficultyLevel.Medium), [], []));
     }
+
+    [Fact]
+    public void Build_NoArchetypeHints_LeavesThemNull()
+    {
+        var items = GenerationBlueprintBuilder.Build(
+            count: 3, difficultySelection: nameof(DifficultyLevel.Medium),
+            questionTypes: ["ÇoktanSeçmeli"], contentFrameworks: []);
+
+        Assert.All(items, i => Assert.Null(i.ArchetypeHint));
+    }
+
+    [Fact]
+    public void Build_ArchetypeHints_RoundRobinsAcrossSelection()
+    {
+        var items = GenerationBlueprintBuilder.Build(
+            count: 4, difficultySelection: nameof(DifficultyLevel.Medium),
+            questionTypes: ["ÇoktanSeçmeli"], contentFrameworks: [],
+            archetypeHints: ["Kalıp A", "Kalıp B"]);
+
+        Assert.Equal(2, items.Count(i => i.ArchetypeHint == "Kalıp A"));
+        Assert.Equal(2, items.Count(i => i.ArchetypeHint == "Kalıp B"));
+    }
 }

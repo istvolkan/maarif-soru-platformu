@@ -1322,6 +1322,23 @@ public class AnthropicLLMProvider : ILLMProvider
             ? $"\n\n        SÜREÇ BİLEŞENLERİ (soru bunlardan en az birini gerçekten ÖLÇMELİ):\n        " +
               string.Join("\n        ", request.ProcessComponents.Select(c => $"- {c}"))
             : "";
+        // §58/§59 Faz 6 — archetype hint ZATEN SOYUTLANMIŞ bir özet (bkz. GenerateQuestionRequest
+        // doc), ham bir kaynak soru DEĞİL; bu yüzden "kopyala" değil "bu TARZI kullan ama özgün
+        // üret" talimatı verilir. §52 Orijinallik Kontrolü (Faz 0) bu talimata rağmen üretilen
+        // sorunun yine de kaynak/havuza çok benzemesi durumunu zaten AYRICA (üretim sonrası) yakalar
+        // — bu blok yalnızca ilk denemenin isabetini artırmak içindir, tek güvence değildir.
+        var archetypeBlock = string.IsNullOrWhiteSpace(request.ArchetypeHint)
+            ? ""
+            : $"""
+
+
+            ÖNERİLEN MUHAKEME TARZI (bir referans, KOPYALANACAK bir metin DEĞİL):
+            {request.ArchetypeHint}
+            Bu, daha önce kaliteli bulunmuş sorularda gözlemlenen SOYUT bir muhakeme kalıbıdır.
+            Mümkünse BENZER BİR MUHAKEME ZİNCİRİ kullan, ama tamamen YENİ bir bağlam/senaryo/sayılarla,
+            tamamen ÖZGÜN bir soru üret. Bu tarz sorunun gereksinimleriyle (kazanım/zorluk/tip)
+            UYUŞMUYORSA bu öneriyi YOK SAY — curriculum uyumu her zaman önceliklidir.
+            """;
         var visualInstruction = request.VisualUsage switch
         {
             GenerationVisualUsage.None =>
@@ -1391,7 +1408,7 @@ public class AnthropicLLMProvider : ILLMProvider
         - Kazanım açıklaması (soru MUTLAKA bunu ölçmeli, sadece temayı değil): {request.LearningOutcomeDescription}
         - Zorluk: {request.Difficulty}
         - Soru tipi: {request.QuestionType}
-        - Muhakeme tipi: {request.ReasoningType}{optionCountLine}{skillsLine}{frameworksLine}{visualInstruction}{componentsLine}
+        - Muhakeme tipi: {request.ReasoningType}{optionCountLine}{skillsLine}{frameworksLine}{visualInstruction}{componentsLine}{archetypeBlock}
 
         KURALLAR:
         1. Yalnızca aşağıdaki [KAYNAK n] bloklarına dayanarak kazanım/olgu iddiası üret.

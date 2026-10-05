@@ -120,7 +120,13 @@ public sealed record GenerateQuestionRequest(
     string VisualUsage = "None",
     string LearningOutcomeDescription = "",
     string? PreviousAttemptFeedback = null,
-    string? ModelOverride = null);
+    string? ModelOverride = null,
+    // §58/§59 Question Intelligence Engine Faz 6 — Faz 3'ün deterministik kümelemesiyle
+    // bulunmuş bir Question Archetype'ın KISA, zaten SOYUTLANMIŞ özeti (bkz.
+    // ArchetypeClusteringService.BuildDefaultName — ham soru metni ASLA değil). Generator'a
+    // "bu TARZDA bir muhakeme zinciri kullan, ama tamamen YENİ bir soru üret" talimatı olarak
+    // verilir; §51'in "DNA'yı tercih et, ham metni verme" ilkesiyle uyumludur.
+    string? ArchetypeHint = null);
 
 // §6 Görsel Soru Motoru (Faz 2) — VisualRequired/VisualSpec yalnızca VisualUsage != "None"
 // istendiğinde dolu gelir. VisualSpec LLM'in ürettiği bir TARİFTİR, gerçek görsel değildir —

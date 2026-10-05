@@ -170,12 +170,36 @@ public class GenerationOrchestrationService(
 
         yield return new GenerationProgressEvent(0, request.Count, "Öğretim programı doğrulandı, sorular oluşturuluyor…", null, null, null);
 
+        // Sprint 11 canlı-yeniden-yükleme deseni: her batch başında bir kez okunur (blueprint
+        // tamamlanana kadar tutarlı kalması için — Ayarlar ortasında değişirse bir sonraki
+        // "Üret" çağrısında etkili olur).
+        var generationRouting = generationRoutingOptions.CurrentValue;
+        var judgeRouting = judgeRoutingOptions.CurrentValue;
+
+        // §57/§58 Faz 6 — Pattern Library'den (Faz 3) bu Grade+Subject için en iyi adayları
+        // çek: PatternScorer admin'in MaarifWeight ayarına göre MaarifAffinity'yi ağırlıklandırır,
+        // SourceSupportCount (§54: kaç bağımsız soruda gözlemlendi) ikincil sıralama kriteridir —
+        // tek bir sorudan doğmuş, hiç doğrulanmamış bir archetype yüksek affinity'yle bile öne
+        // çıkmasın diye. Faz 3 verisi henüz yoksa (hiç kitap analiz edilmemişse) boş liste döner —
+        // GenerationBlueprintBuilder bunu geriye dönük uyumlu şekilde "hint yok" olarak işler.
+        var archetypeHints = await db.QuestionArchetypes
+            .Where(a => a.Subject == request.Subject && a.GradeRangeMin <= request.Grade && a.GradeRangeMax >= request.Grade)
+            .Select(a => new { a.Name, a.MaarifAffinity, a.SourceSupportCount })
+            .ToListAsync(ct);
+        var rankedArchetypeHints = archetypeHints
+            .OrderByDescending(a => PatternScorer.Score(a.MaarifAffinity, generationRouting.MaarifWeight))
+            .ThenByDescending(a => a.SourceSupportCount)
+            .Select(a => a.Name)
+            .Take(Math.Min(5, request.Count))
+            .ToList();
+
         IReadOnlyList<GenerationBlueprintItem>? blueprint = null;
         string? blueprintError = null;
         try
         {
             blueprint = GenerationBlueprintBuilder.Build(
-                request.Count, request.DifficultySelection, request.QuestionTypes, request.ContentFrameworkNames);
+                request.Count, request.DifficultySelection, request.QuestionTypes, request.ContentFrameworkNames,
+                rankedArchetypeHints);
         }
         catch (ArgumentException ex)
         {
@@ -188,11 +212,6 @@ public class GenerationOrchestrationService(
             yield break;
         }
 
-        // Sprint 11 canlı-yeniden-yükleme deseni: her batch başında bir kez okunur (blueprint
-        // tamamlanana kadar tutarlı kalması için — Ayarlar ortasında değişirse bir sonraki
-        // "Üret" çağrısında etkili olur).
-        var generationRouting = generationRoutingOptions.CurrentValue;
-        var judgeRouting = judgeRoutingOptions.CurrentValue;
         var maxAttempts = Math.Max(1, generationRouting.MaxRegenerationAttempts);
         var defaultCurriculumValidatorProviderName = string.IsNullOrWhiteSpace(generationRouting.CurriculumValidatorProvider)
             ? aiRouting.CurrentValue.Provider
@@ -247,7 +266,8 @@ public class GenerationOrchestrationService(
                     item.ContentFramework is null ? [] : [item.ContentFramework],
                     request.ProcessComponents, request.VisualUsage, request.LearningOutcomeDescription,
                     PreviousAttemptFeedback: attemptMessages.Count > 0 ? attemptMessages[^1] : null,
-                    ModelOverride: generatorModel);
+                    ModelOverride: generatorModel,
+                    ArchetypeHint: item.ArchetypeHint);
 
                 GenerateQuestionResult generated;
                 try
